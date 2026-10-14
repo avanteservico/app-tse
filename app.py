@@ -127,10 +127,32 @@ h1, h2, h3 { font-family: 'Jost', system-ui, sans-serif !important; font-weight:
   .cand-foto { width: 40px; height: 52px; font-size: .9rem; }
   .cand-nome { font-size: 1rem; }
   .cand-meta { margin-top: 6px; }
+  .block-container { padding: 3.2rem .9rem 2rem !important; }
+  h1 { font-size: 1.7rem !important; }
+  [data-testid="stMetric"] { padding: 10px 14px; }
+  [data-testid="stMetricValue"] { font-size: 1.5rem; }
+  .faixa { font-size: .88rem; line-height: 1.6; }
 }
 </style>
 """
 st.markdown(ESTILO, unsafe_allow_html=True)
+
+
+
+def eh_celular():
+    """Celular: os filtros vão para o topo da página (lá o menu lateral fica escondido atrás de um botão).
+    Para forçar, acrescente ?celular=1 (ou ?celular=0) no endereço."""
+    forcado = st.query_params.get("celular")
+    if forcado in ("0", "1"):
+        return forcado == "1"
+    try:
+        navegador = st.context.headers.get("User-Agent", "") or ""
+    except Exception:
+        return False
+    return any(marca in navegador for marca in ("Mobi", "Android", "iPhone", "iPod"))
+
+
+CELULAR = eh_celular()
 
 st.title("Eleições - Bahia")
 st.caption(
@@ -750,24 +772,31 @@ if not arquivo_resumo().exists() or not ARQ_INDICE.exists():
 dados = carregar_resumo()
 indice = carregar_indice()
 
-tela = st.sidebar.radio("Tela", [TELA_VOTACAO, TELA_CADASTRO])
+if CELULAR:
+    tela = st.radio("Tela", [TELA_VOTACAO, TELA_CADASTRO], horizontal=True, label_visibility="collapsed")
+else:
+    tela = st.sidebar.radio("Tela", [TELA_VOTACAO, TELA_CADASTRO])
 if tela == TELA_CADASTRO:
     tela_cadastro(indice)
     st.stop()
 
 # ---------------------------------------------------------------- filtros
-st.sidebar.header("Filtros")
+if CELULAR:
+    painel = st.expander("Filtros", expanded=True, icon=":material/tune:")
+else:
+    painel = st.sidebar
+    painel.header("Filtros")
 anos = sorted(dados["ANO"].unique(), reverse=True)
-ano = st.sidebar.selectbox("Ano da eleição", anos)
+ano = painel.selectbox("Ano da eleição", anos)
 d = dados[dados["ANO"] == ano]
 
-turno = st.sidebar.selectbox("Turno", sorted(d["NR_TURNO"].unique()))
+turno = painel.selectbox("Turno", sorted(d["NR_TURNO"].unique()))
 d = d[d["NR_TURNO"] == turno]
 
-cargo = st.sidebar.selectbox("Cargo", sorted(d["DS_CARGO"].unique()))
+cargo = painel.selectbox("Cargo", sorted(d["DS_CARGO"].unique()))
 d = d[d["DS_CARGO"] == cargo]
 
-municipio = st.sidebar.selectbox("Município", [TODOS] + sorted(d["NM_MUNICIPIO"].unique()))
+municipio = painel.selectbox("Município", [TODOS] + sorted(d["NM_MUNICIPIO"].unique()))
 
 ds_ano = None         # todas as linhas do município no ano escolhido
 ds = None             # ano/turno/cargo escolhidos
@@ -797,16 +826,16 @@ else:
     # ---- bairro / localidade (pesquisa + lista)
     if tem_bairro:
         todos_bairros = sorted(escolas_todas["BAIRRO"].unique(), key=normalizar)
-        busca = st.sidebar.text_input("Pesquisar bairro/localidade", placeholder="ex.: centro")
+        busca = painel.text_input("Pesquisar bairro/localidade", placeholder="ex.: centro")
         if busca.strip():
             lista = [b for b in todos_bairros if normalizar(busca) in normalizar(b)]
             rotulo_todos = f'Todos que contêm "{busca.strip()}" ({len(lista)})'
         else:
             lista = todos_bairros
             rotulo_todos = TODOS_BAIRROS
-        bairro_sel = st.sidebar.selectbox("Bairro/localidade", [rotulo_todos] + lista)
+        bairro_sel = painel.selectbox("Bairro/localidade", [rotulo_todos] + lista)
         if busca.strip() and not lista:
-            st.sidebar.warning("Nenhum bairro encontrado com esse texto.")
+            painel.warning("Nenhum bairro encontrado com esse texto.")
         if bairro_sel != rotulo_todos:
             bairros_alvo = {normalizar(bairro_sel)}
             bairro_txt = bairro_sel
@@ -814,7 +843,7 @@ else:
             bairros_alvo = {normalizar(b) for b in lista}
             bairro_txt = f'bairros com "{busca.strip()}"'
     else:
-        st.sidebar.info("Bairro/localidade não disponível nos dados deste município/ano.")
+        painel.info("Bairro/localidade não disponível nos dados deste município/ano.")
 
     def filtrar_bairro(df):
         if bairros_alvo is None:
@@ -834,7 +863,7 @@ else:
         rotulos.append(f"{e['NM_LOCAL_VOTACAO']}{com_bairro} (zona {e['NR_ZONA']}{sufixo})")
     escolas_f["rotulo"] = rotulos
 
-    escola_sel = st.sidebar.selectbox("Escola", [TODAS_ESCOLAS] + escolas_f["rotulo"].tolist())
+    escola_sel = painel.selectbox("Escola", [TODAS_ESCOLAS] + escolas_f["rotulo"].tolist())
 
     base = ds_bairro
     if escola_sel != TODAS_ESCOLAS:
@@ -847,7 +876,7 @@ else:
         secoes["_n"] = pd.to_numeric(secoes["NR_SECAO"], errors="coerce")
         secoes = secoes.sort_values("_n").reset_index(drop=True)
 
-        secao_sel = st.sidebar.selectbox("Seção", [TODAS_SECOES] + secoes["NR_SECAO"].tolist())
+        secao_sel = painel.selectbox("Seção", [TODAS_SECOES] + secoes["NR_SECAO"].tolist())
         if secao_sel != TODAS_SECOES:
             base = base[base["NR_SECAO"] == secao_sel]
 
@@ -995,7 +1024,7 @@ else:
     qtd_chave = f"qtd|{chave}|{texto_filtro}|{partido_sel}|{ordem_lista}"
     qtd = st.session_state.get(qtd_chave, 10)
     aviso = (
-        "Escolha um <b>município</b> na barra lateral para ver a votação de cada candidato <b>por escola</b>."
+        "Escolha um <b>município</b> nos <b>filtros</b> para ver a votação de cada candidato <b>por escola</b>."
         if ds is None else
         "Para ver a votação de um candidato <b>por escola</b>, clique nele na <b>tabela completa</b> abaixo."
     )
