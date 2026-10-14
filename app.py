@@ -264,6 +264,16 @@ def so_nominais(df):
     return df[mascara]
 
 
+# números que podem ser voto de legenda (número do partido); 95 a 98 são branco/nulo
+NUMEROS_LEGENDA = [str(n) for n in range(10, 100) if n not in (95, 96, 97, 98)]
+
+
+def so_legenda(df):
+    """Só os votos de legenda (no número do partido), que existem para deputado e vereador."""
+    proporcional = df["DS_CARGO"].str.contains("deputado|vereador", case=False, na=False, regex=True)
+    return df[proporcional & df["NR_VOTAVEL"].astype(str).isin(NUMEROS_LEGENDA)]
+
+
 def formatar(n):
     return f"{int(n):,}".replace(",", ".")
 
@@ -684,6 +694,13 @@ def carregar_fotos(ano, ue):
 
 
 @st.cache_data
+def carregar_legenda_resumo():
+    """Votos de legenda por município (para "Todos os municípios")."""
+    df = so_legenda(ler_tabela(arquivo_resumo()))
+    return df.assign(QT_VOTOS=pd.to_numeric(df["QT_VOTOS"], errors="coerce").fillna(0).astype(int))
+
+
+@st.cache_data
 def carregar_partidos():
     """{(ano, número do partido): sigla}, a partir dos votos de legenda dos cargos de deputado/vereador."""
     df = ler_tabela(arquivo_resumo())
@@ -804,11 +821,15 @@ def agrupar(df, chaves):
 
 
 @st.cache_data(max_entries=6)
-def carregar_municipio(codigo, versao=0, anos=None):
-    """Votos por seção do município. anos=None carrega todos; senão só os anos pedidos (bem mais leve)."""
+def carregar_municipio(codigo, versao=0, anos=None, legenda=False):
+    """Votos por seção do município. anos=None carrega todos; senão só os anos pedidos (bem mais leve).
+    legenda=True devolve só os votos de legenda (no número do partido) em vez dos votos nominais."""
     arquivo = arquivo_municipio(codigo)
     if arquivo.suffix == ".parquet" and anos is not None:
-        df = pd.read_parquet(arquivo, filters=[("ANO", "in", list(anos))])
+        filtros = [("ANO", "in", list(anos))]
+        if legenda:   # lê só as linhas com número de partido: bem mais rápido
+            filtros.append(("NR_VOTAVEL", "in", NUMEROS_LEGENDA))
+        df = pd.read_parquet(arquivo, filters=filtros)
     else:
         df = ler_tabela(arquivo)
         if anos is not None:
@@ -836,7 +857,7 @@ def carregar_municipio(codigo, versao=0, anos=None):
     df["LAT"] = pd.to_numeric(df["NR_LATITUDE"].astype(str), errors="coerce")
     df["LON"] = pd.to_numeric(df["NR_LONGITUDE"].astype(str), errors="coerce")
     df = df.drop(columns=["NR_LATITUDE", "NR_LONGITUDE"])
-    return como_categoria(so_nominais(df))
+    return como_categoria(so_legenda(df) if legenda else so_nominais(df))
 
 
 def agregar_escolas(df):
@@ -1236,6 +1257,27 @@ else:
         secao_sel = painel.selectbox("Seção", [TODAS_SECOES] + secoes["NR_SECAO"].tolist())
         if secao_sel != TODAS_SECOES:
             base = base[base["NR_SECAO"] == secao_sel]
+
+# votos de legenda com os mesmos filtros (entram no total de cada partido)
+if municipio == TODOS:
+    votos_legenda = carregar_legenda_resumo()
+    votos_legenda = votos_legenda[
+        (votos_legenda["ANO"] == ano) & (votos_legenda["NR_TURNO"] == turno) & (votos_legenda["DS_CARGO"] == cargo)
+    ]
+else:
+    votos_legenda = carregar_municipio(codigo, versao_bairros(), (ano,), legenda=True)
+    votos_legenda = filtrar_bairro(
+        votos_legenda[(votos_legenda["NR_TURNO"] == turno) & (votos_legenda["DS_CARGO"] == cargo)]
+    )
+    if escola is not None:
+        votos_legenda = votos_legenda[
+            (votos_legenda["NR_ZONA"] == escola["NR_ZONA"])
+            & (votos_legenda["NR_LOCAL_VOTACAO"] == escola["NR_LOCAL_VOTACAO"])
+        ]
+    if secao_sel != TODAS_SECOES:
+        votos_legenda = votos_legenda[votos_legenda["NR_SECAO"] == secao_sel]
+legenda_por_numero = votos_legenda.groupby("NR_VOTAVEL", observed=True)["QT_VOTOS"].sum()
+legenda_por_numero = {str(n): int(v) for n, v in legenda_por_numero.items() if v}
 
 # ------------------------------------------------- votos por candidato (nominal)
 # prefeito/vereador com "Todos os municípios": o mesmo número existe em várias cidades -> uma linha por cidade
@@ -1725,19 +1767,35 @@ ordem_lista = o1.segmented_control(
     "Ordem", [MAIS_VOTADOS, ALFABETICA], default=MAIS_VOTADOS, label_visibility="collapsed",
 ) or MAIS_VOTADOS
 lista_partidos = sorted(p for p in resultado["Partido"].unique() if p)
-votos_partido = resultado.groupby("Partido")["Votos"].sum()
+nominais_partido = resultado.groupby("Partido")["Votos"].sum()
 cands_partido = resultado.groupby("Partido").size()
+# legenda: o número do partido (ex.: 13) vai para a mesma sigla dos candidatos dele (13xxx)
+sigla_do_numero = (
+    resultado.assign(_n=resultado["Número"].str[:2]).groupby("_n")["Partido"]
+    .agg(lambda s: s.mode().iloc[0] if not s.mode().empty else "").to_dict()
+)
+legenda_partido = {}
+for n, v in legenda_por_numero.items():
+    sigla = sigla_do_numero.get(n) or partidos.get((ano, n)) or SIGLAS_POR_NUMERO.get(n, "")
+    if sigla:
+        legenda_partido[sigla] = legenda_partido.get(sigla, 0) + v
+votos_partido = nominais_partido.add(pd.Series(legenda_partido, dtype=int), fill_value=0).astype(int)
+total_com_legenda = total + sum(legenda_por_numero.values())
 partido_sel = o2.selectbox(
     "Partido", [TODOS_PARTIDOS] + lista_partidos, label_visibility="collapsed",
     format_func=lambda p: p if p == TODOS_PARTIDOS else f"{p} · {formatar(votos_partido[p])} votos",
 )
 if partido_sel != TODOS_PARTIDOS:
     # total dos votos nominais dos candidatos do partido (sem os votos de legenda)
+    da_legenda = legenda_partido.get(partido_sel, 0)
+    composicao = (f' ({formatar(nominais_partido[partido_sel])} nominais + {formatar(da_legenda)} de legenda)'
+                  if da_legenda else " nominais")
     o3.markdown(
         f'<div class="partido-total"><b>{html.escape(partido_sel)}</b>'
-        f'<span class="sep">·</span><b>{formatar(votos_partido[partido_sel])}</b> votos nominais'
+        f'<span class="sep">·</span><b>{formatar(votos_partido[partido_sel])}</b> votos{composicao}'
         f'<span class="sep">·</span>{cands_partido[partido_sel]} candidato(s)'
-        f'<span class="sep">·</span>{formatar_pct(votos_partido[partido_sel] / total * 100 if total else 0)} do total</div>',
+        f'<span class="sep">·</span>{formatar_pct(votos_partido[partido_sel] / total_com_legenda * 100 if total_com_legenda else 0)}'
+        f' do total</div>',
         unsafe_allow_html=True,
     )
 
