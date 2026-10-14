@@ -486,7 +486,8 @@ SITUACOES = {
 
 @st.cache_data(max_entries=3)
 def carregar_candidatos(ano):
-    """Cadastro de um ano: {(ano, turno, cargo, UE, número): (sigla do partido, situação, SQ_CANDIDATO)} - feito pelo preparar_candidatos.py.
+    """Cadastro de um ano: {(ano, turno, cargo, UE, número): (sigla do partido, situação, SQ_CANDIDATO, ID_PESSOA)}
+    - feito pelo preparar_candidatos.py. ID_PESSOA identifica a mesma pessoa em anos diferentes.
     UE = "BA" nas eleições gerais; nas municipais, o código do município (o mesmo número de vereador
     existe em várias cidades)."""
     arquivo = PASTA_APP / "candidatos.parquet"
@@ -497,13 +498,21 @@ def carregar_candidatos(ano):
         return {}
     situacoes = {s: SITUACOES.get(normalizar(s), "") for s in df["DS_SIT_TOT_TURNO"].unique()}
     cargos = {c: normalizar(c) for c in df["DS_CARGO"].unique()}
+    pessoas = df["ID_PESSOA"] if "ID_PESSOA" in df.columns else [""] * len(df)
     return {
-        (a, t, cargos[c], u, n): (p, situacoes[s], q)
-        for a, t, c, u, n, p, s, q in zip(
+        (a, t, cargos[c], u, n): (p, situacoes[s], q, i)
+        for a, t, c, u, n, p, s, q, i in zip(
             df["ANO"], df["NR_TURNO"], df["DS_CARGO"], df["SG_UE"], df["NR_CANDIDATO"],
-            df["SG_PARTIDO"], df["DS_SIT_TOT_TURNO"], df["SQ_CANDIDATO"],
+            df["SG_PARTIDO"], df["DS_SIT_TOT_TURNO"], df["SQ_CANDIDATO"], pessoas,
         )
     }
+
+
+def candidaturas_da_pessoa(ano, pessoa, ues):
+    """{(cargo normalizado, número)} das candidaturas da pessoa no ano (só nas UEs dadas: "BA" ou o município)."""
+    if not pessoa:
+        return set()
+    return {(c, n) for (_, _, c, u, n), (*_, i) in carregar_candidatos(ano).items() if i == pessoa and u in ues}
 
 
 @st.cache_data(max_entries=60)
@@ -1101,11 +1110,12 @@ elif eh_municipal(cargo):
 else:
     ues = ["BA"] * len(resultado)
 do_cadastro = [
-    cadastro.get((ano, turno, cargo_n, u, n)) or cadastro.get((ano, "1", cargo_n, u, n)) or ("", "", "")
+    cadastro.get((ano, turno, cargo_n, u, n)) or cadastro.get((ano, "1", cargo_n, u, n)) or ("", "", "", "")
     for u, n in zip(ues, resultado["NR_VOTAVEL"])
 ]
 resultado.insert(0, "Pos.", range(1, len(resultado) + 1))
 foto_sq = {pos: (u, c[2]) for pos, u, c in zip(resultado["Pos."], ues, do_cadastro) if c[2]}
+pessoa_do_numero = {n: c[3] for n, c in zip(resultado["NR_VOTAVEL"], do_cadastro) if c[3]}
 
 
 def foto_de(pos):
@@ -1285,15 +1295,26 @@ def mostrar_candidato(candidato):
                     cands_b["NR_VOTAVEL"] + " - " + cands_b["NM_VOTAVEL"] + " (" + cands_b["DS_CARGO"] + ")"
                 )
                 cands_b["_nome"] = cands_b["NM_VOTAVEL"].map(normalizar)
-                iguais = cands_b[cands_b["_nome"] == normalizar(nome)]
+                # a mesma pessoa no outro ano: pelo cadastro do TSE (o nome de urna pode ter mudado,
+                # ex.: "DEPUTADO DAL" em 2022 e "DAL BARRETO" em 2026); se não achar, pelo nome de urna
+                da_pessoa = candidaturas_da_pessoa(
+                    ano_b, pessoa_do_numero.get(numero), {"BA", str(codigo).lstrip("0")},
+                )
+                mesma_pessoa = [(normalizar(c), n) in da_pessoa for c, n in zip(cands_b["DS_CARGO"], cands_b["NR_VOTAVEL"])]
+                iguais = cands_b[mesma_pessoa]
+                if iguais.empty:
+                    iguais = cands_b[cands_b["_nome"] == normalizar(nome)]
                 padrao = None
                 if not iguais.empty:
                     mesmo_cargo = iguais[iguais["DS_CARGO"] == cargo]
-                    padrao = (mesmo_cargo if not mesmo_cargo.empty else iguais).iloc[0]["rotulo"]
+                    achado = (mesmo_cargo if not mesmo_cargo.empty else iguais).iloc[0]
+                    padrao = achado["rotulo"]
+                    if achado["_nome"] != normalizar(nome):
+                        st.caption(f"Em {ano_b}, {nome} usou o nome de urna **{achado['NM_VOTAVEL']}**.")
                 else:
                     st.info(
-                        f"Não achei {nome} em {ano_b} neste município (o nome de urna pode ter mudado, "
-                        "ou ele não teve votos aqui). Escolha o candidato correspondente na lista."
+                        f"Não achei {nome} em {ano_b} neste município (pode não ter sido candidato nesse ano "
+                        "ou não ter tido votos aqui). Se quiser, escolha um candidato na lista para comparar."
                     )
                 opcoes_b = [ESCOLHER] + cands_b["rotulo"].tolist()
                 escolhido_b = st.selectbox(

@@ -15,6 +15,7 @@ Precisa da biblioteca Pillow para as fotos (uma vez só):
     pip install pillow
 """
 
+import hashlib
 import io
 import re
 import shutil
@@ -31,6 +32,16 @@ DESTINO = PASTA_APP / "candidatos.parquet"
 PASTA_FOTOS = PASTA_APP / "fotos"
 TAMANHO_FOTO = (81, 108)    # largura x altura em pixels (o app mostra em 54 x 72, um pouco menor, para ficar nítida)
 COLUNAS = ["NR_TURNO", "DS_CARGO", "SG_UE", "NR_CANDIDATO", "SQ_CANDIDATO", "SG_PARTIDO", "DS_SIT_TOT_TURNO"]
+COL_TITULO = "NR_TITULO_ELEITORAL_CANDIDATO"
+
+
+def id_pessoa(titulo):
+    """Código que identifica a mesma pessoa em anos diferentes (o nome de urna pode mudar).
+    Vem do título de eleitor (presente em todos os anos; o CPF não vem em 2024), mas não guarda o título."""
+    titulo = titulo.strip().lstrip("0")
+    if not titulo.isdigit():
+        return ""
+    return hashlib.sha256(f"eleicoes-ba|{titulo}".encode()).hexdigest()[:16]
 
 
 def ler_cadastro(ano):
@@ -43,9 +54,11 @@ def ler_cadastro(ano):
     if faltando:
         print(f"AVISO: {csv.name} não tem as colunas {faltando}; {ano} fica sem fotos/situação.")
         return None
+    pessoa = df[COL_TITULO].map(id_pessoa) if COL_TITULO in df.columns else ""
     df = df[COLUNAS].copy()
     for coluna in COLUNAS:
         df[coluna] = df[coluna].str.strip()
+    df["ID_PESSOA"] = pessoa
     df["SG_UE"] = df["SG_UE"].str.lstrip("0")   # mesmo formato do código de município no app
     df.insert(0, "ANO", ano)
     return df
