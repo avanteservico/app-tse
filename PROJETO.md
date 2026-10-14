@@ -9,7 +9,7 @@
 - Seja honesto sobre o que foi e o que não foi testado (seção 8).
 
 ## 2. Objetivo do projeto
-App em **Streamlit** sobre os dados abertos do **TSE** (Tribunal Superior Eleitoral), para a **Bahia**, eleições **2022** e **2026 (1º turno)**:
+App em **Streamlit** sobre os dados abertos do **TSE** (Tribunal Superior Eleitoral), para a **Bahia**, eleições **2018**, **2022** e **2026 (1º turno)** (2018 incluído em 14/10/2026; 2016, 2020 e 2024 — municipais — ainda não, ver backlog):
 - Filtrar por ano, turno, cargo, município, bairro/localidade, escola e seção.
 - Mostrar **sempre a votação nominal** (sem branco, nulo e voto de legenda).
 - Clicar no candidato → votação dele **por escola** no município.
@@ -60,7 +60,7 @@ Formato dos CSVs: separador `;`; codificação **latin-1 em 2022, mas 2026 pode 
 - Texto de interface em português; tabelas com cabeçalhos em português.
 
 ## 7. Estrutura do `app.py`
-Tela na barra lateral (`Votação` | `Cadastrar bairros das escolas`) → filtros (ano, turno, cargo, município, pesquisa de bairro + lista de bairros, escola, seção) → métricas → dados da escola/seções → "Mapa das escolas" → Top 10 → tabela clicável de candidatos (`on_select="rerun"`, com alternativa para Streamlit antigo) → votação por escola + mapa do candidato → comparação entre anos + mapa da diferença + CSVs. Funções-chave: `so_nominais`, `carregar_municipio(codigo, versao)`, `agregar_escolas`, `escolas_com_votos`, `chave_escola`, `preparar_para_comparar`, `desenhar_mapa`, `tela_cadastro`.
+Tela na barra lateral (`Votação` | `Cadastrar bairros das escolas`) → filtros (ano, turno, cargo, município, pesquisa de bairro + lista de bairros, escola, seção) → métricas → dados da escola/seções → "Mapa das escolas" → Top 10 → tabela clicável de candidatos (`on_select="rerun"`, com alternativa para Streamlit antigo) → votação por escola + mapa do candidato → comparação entre anos + mapa da diferença + CSVs. Memória: `carregar_municipio(codigo, versao, anos)` lê do Parquet **só os anos pedidos** (o ano escolhido; o da comparação é lido à parte) e guarda os textos como `category` (Salvador: ~554 MB → ~30 MB por ano). Por isso todo agrupamento usa `agrupar()` (observed=True) e o resultado passa por `texto()` (volta a texto comum). Cache de municípios limitado (`max_entries=6`). Funções-chave: `so_nominais`, `carregar_municipio(codigo, versao, anos)`, `agregar_escolas`, `escolas_com_votos`, `chave_escola`, `preparar_para_comparar`, `desenhar_mapa`, `tela_cadastro`.
 
 ## 8. O que foi testado e o que NÃO foi
 **Testado** (com dados **fictícios** no formato do TSE e um Streamlit/pydeck **simulados**, porque o ambiente de desenvolvimento não conseguia instalar as bibliotecas): lógica de filtros, votos nominais, ranking, comparação, pareamento de escolas, mapas (dados enviados ao pydeck), nome de urna, cadastro de bairros, dois encodings, ausência de arquivos.
@@ -80,6 +80,7 @@ Tela na barra lateral (`Votação` | `Cadastrar bairros das escolas`) → filtro
 - Testado localmente (AppTest, dados reais): abrir o app, Itamaraju com bairros informados, Salvador, tela de cadastro. **Não testado**: gravação no Supabase de verdade e memória do Streamlit Cloud com Salvador (~600 MB na memória).
 
 ## 9. Backlog de ideias (só se o usuário pedir)
+- **Eleições municipais 2016, 2020, 2024** (avaliadas em 14/10/2026; arquivos do TSE existem com as mesmas colunas). Falta: tirar voto de legenda também de **vereador** em `so_nominais`/`carregar_partidos`; ligar cadastro/fotos também pelo município (`SG_UE`), pois números de vereador se repetem entre cidades; fotos separadas por ano/município (ZIPs de 1 GB, dezenas de milhares de candidatos); exigir município para vereador em "Todos os municípios".
 - Importar bairros a partir de planilha (CSV/Excel) preenchida fora do app.
 - Filtro/mapa por zona eleitoral; exportar relatório por bairro.
 - Outros turnos/cargos/estados; deixar o `UF` configurável.

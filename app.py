@@ -377,12 +377,41 @@ def salvar_bairros_municipio(codigo, registros, removidos):
     temporario.replace(ARQ_BAIRROS)
 
 
-@st.cache_data
-def carregar_municipio(codigo, versao=0):
-    df = ler_tabela(arquivo_municipio(codigo))
+def como_categoria(df):
+    """Guarda cada texto repetido uma vez só (economiza ~90% de memória nos municípios grandes)."""
+    for coluna in df.columns:
+        if df[coluna].dtype == object or pd.api.types.is_string_dtype(df[coluna].dtype):
+            df[coluna] = df[coluna].astype("category")
+    return df
+
+
+def texto(df):
+    """Volta as colunas 'categoria' para texto comum (usado depois de agrupar)."""
+    for coluna in df.columns:
+        if isinstance(df[coluna].dtype, pd.CategoricalDtype):
+            df[coluna] = df[coluna].astype(str)
+    return df
+
+
+def agrupar(df, chaves):
+    return df.groupby(chaves, as_index=False, observed=True)
+
+
+@st.cache_data(max_entries=6)
+def carregar_municipio(codigo, versao=0, anos=None):
+    """Votos por seção do município. anos=None carrega todos; senão só os anos pedidos (bem mais leve)."""
+    arquivo = arquivo_municipio(codigo)
+    if arquivo.suffix == ".parquet" and anos is not None:
+        df = pd.read_parquet(arquivo, filters=[("ANO", "in", list(anos))])
+    else:
+        df = ler_tabela(arquivo)
+        if anos is not None:
+            df = df[df["ANO"].isin(anos)]
     df["QT_VOTOS"] = pd.to_numeric(df["QT_VOTOS"], errors="coerce").fillna(0).astype(int)
+    df = como_categoria(df)
     if "NM_BAIRRO" not in df.columns:
         df["NM_BAIRRO"] = ""
+    df["NM_BAIRRO"] = df["NM_BAIRRO"].astype(str)
     df["BAIRRO_TSE"] = df["NM_BAIRRO"].str.strip()
     informados = ler_bairros_informados()
     informados = informados[informados["CD_MUNICIPIO"] == str(codigo)]
@@ -398,15 +427,16 @@ def carregar_municipio(codigo, versao=0):
     for coluna in ("NR_LATITUDE", "NR_LONGITUDE"):
         if coluna not in df.columns:
             df[coluna] = ""
-    df["LAT"] = pd.to_numeric(df["NR_LATITUDE"], errors="coerce")
-    df["LON"] = pd.to_numeric(df["NR_LONGITUDE"], errors="coerce")
-    return so_nominais(df)
+    df["LAT"] = pd.to_numeric(df["NR_LATITUDE"].astype(str), errors="coerce")
+    df["LON"] = pd.to_numeric(df["NR_LONGITUDE"].astype(str), errors="coerce")
+    df = df.drop(columns=["NR_LATITUDE", "NR_LONGITUDE"])
+    return como_categoria(so_nominais(df))
 
 
 def agregar_escolas(df):
     """Uma linha por escola (zona + número do local)."""
-    return (
-        df.groupby(["NR_ZONA", "NR_LOCAL_VOTACAO"], as_index=False)
+    return texto(
+        agrupar(df, ["NR_ZONA", "NR_LOCAL_VOTACAO"])
         .agg(
             NM_LOCAL_VOTACAO=("NM_LOCAL_VOTACAO", "first"),
             DS_LOCAL_VOTACAO_ENDERECO=("DS_LOCAL_VOTACAO_ENDERECO", "first"),
@@ -422,8 +452,8 @@ def agregar_escolas(df):
 def escolas_com_votos(universo, do_candidato):
     """Todas as escolas do 'universo', com os votos do candidato em cada uma (0 se não teve)."""
     esc = agregar_escolas(universo).drop(columns=["VOTOS_TOTAL", "NSECOES"])
-    votos = (
-        do_candidato.groupby(["NR_ZONA", "NR_LOCAL_VOTACAO"], as_index=False)["QT_VOTOS"].sum()
+    votos = texto(
+        agrupar(do_candidato, ["NR_ZONA", "NR_LOCAL_VOTACAO"])["QT_VOTOS"].sum()
         .rename(columns={"QT_VOTOS": "Votos"})
     )
     esc = esc.merge(votos, on=["NR_ZONA", "NR_LOCAL_VOTACAO"], how="left")
@@ -606,10 +636,11 @@ def tela_cadastro(indice):
 
     df = carregar_municipio(codigo, versao_bairros())
     df = df.assign(
-        _zona_n=df["NR_ZONA"].str.lstrip("0"),
-        _nome_n=df["NM_LOCAL_VOTACAO"].map({n: normalizar(n) for n in df["NM_LOCAL_VOTACAO"].unique()}),
+        _zona_n=df["NR_ZONA"].astype(str).str.lstrip("0"),
+        _nome_n=df["NM_LOCAL_VOTACAO"].astype(str).map({n: normalizar(n) for n in df["NM_LOCAL_VOTACAO"].unique()}),
+        BAIRRO_TSE=df["BAIRRO_TSE"].astype(str),
     )
-    esc = df.groupby(["_zona_n", "_nome_n"], as_index=False).agg(
+    esc = agrupar(df, ["_zona_n", "_nome_n"]).agg(
         Escola=("NM_LOCAL_VOTACAO", "first"),
         Zona=("NR_ZONA", "first"),
         Endereço=("DS_LOCAL_VOTACAO_ENDERECO", "first"),
@@ -617,6 +648,7 @@ def tela_cadastro(indice):
         Seções=("NR_SECAO", "nunique"),
         **{"Bairro no TSE": ("BAIRRO_TSE", "max")},
     )
+    esc = texto(esc)
     salvos = ler_bairros_informados()
     salvos = salvos[salvos["CD_MUNICIPIO"] == str(codigo)]
     do_usuario = {(z, n): b for z, n, b in zip(salvos["NR_ZONA"], salvos["NM_LOCAL_N"], salvos["BAIRRO"])}
@@ -711,7 +743,7 @@ d = d[d["DS_CARGO"] == cargo]
 
 municipio = st.sidebar.selectbox("Município", [TODOS] + sorted(d["NM_MUNICIPIO"].unique()))
 
-ds_todos = None       # todas as linhas do município (todos os anos)
+ds_ano = None         # todas as linhas do município no ano escolhido
 ds = None             # ano/turno/cargo escolhidos
 ds_bairro = None      # ... já filtrado por bairro
 escolas_f = None
@@ -730,10 +762,8 @@ else:
         st.error("Dados por seção não encontrados. Rode de novo: python preparar_dados.py")
         st.stop()
 
-    ds_todos = carregar_municipio(codigo, versao_bairros())
-    ds = ds_todos[
-        (ds_todos["ANO"] == ano) & (ds_todos["NR_TURNO"] == turno) & (ds_todos["DS_CARGO"] == cargo)
-    ]
+    ds_ano = carregar_municipio(codigo, versao_bairros(), (ano,))
+    ds = ds_ano[(ds_ano["NR_TURNO"] == turno) & (ds_ano["DS_CARGO"] == cargo)]
     escolas_todas = agregar_escolas(ds)
     centro_mun = (escolas_todas["LAT"].median(), escolas_todas["LON"].median())
     tem_bairro =bool((escolas_todas["BAIRRO"] != SEM_BAIRRO).any())
@@ -787,7 +817,7 @@ else:
             (ds_bairro["NR_ZONA"] == escola["NR_ZONA"])
             & (ds_bairro["NR_LOCAL_VOTACAO"] == escola["NR_LOCAL_VOTACAO"])
         ]
-        secoes = base.groupby("NR_SECAO", as_index=False)["QT_VOTOS"].sum()
+        secoes = texto(agrupar(base, "NR_SECAO")["QT_VOTOS"].sum())
         secoes["_n"] = pd.to_numeric(secoes["NR_SECAO"], errors="coerce")
         secoes = secoes.sort_values("_n").reset_index(drop=True)
 
@@ -796,8 +826,8 @@ else:
             base = base[base["NR_SECAO"] == secao_sel]
 
 # ------------------------------------------------- votos por candidato (nominal)
-resultado = (
-    base.groupby(["NR_VOTAVEL", "NM_VOTAVEL"], as_index=False)["QT_VOTOS"].sum()
+resultado = texto(
+    agrupar(base, ["NR_VOTAVEL", "NM_VOTAVEL"])["QT_VOTOS"].sum()
     .sort_values("QT_VOTOS", ascending=False)
     .reset_index(drop=True)
 )
@@ -951,8 +981,8 @@ if candidato is not None:
     nome = candidato["Candidato"]
     do_candidato = ds_bairro[ds_bairro["NR_VOTAVEL"] == numero]
 
-    por_escola = (
-        do_candidato.groupby(["NR_ZONA", "NR_LOCAL_VOTACAO"], as_index=False)
+    por_escola = texto(
+        agrupar(do_candidato, ["NR_ZONA", "NR_LOCAL_VOTACAO"])
         .agg(
             Escola=("NM_LOCAL_VOTACAO", "first"),
             **{
@@ -1016,13 +1046,14 @@ if candidato is not None:
         )
         if escolha_ano != NAO_COMPARAR:
             ano_b = escolha_ano
-            dsb = ds_todos[(ds_todos["ANO"] == ano_b) & (ds_todos["NR_TURNO"] == turno)]
+            dsb = carregar_municipio(codigo, versao_bairros(), (ano_b,))
+            dsb = dsb[dsb["NR_TURNO"] == turno]
             if dsb.empty:
                 st.info(f"Não há dados de {ano_b} no {turno}º turno para este município.")
             else:
                 # candidato correspondente no outro ano (mesmo nome de urna), qualquer cargo
-                cands_b = (
-                    dsb.groupby(["DS_CARGO", "NR_VOTAVEL", "NM_VOTAVEL"], as_index=False)["QT_VOTOS"].sum()
+                cands_b = texto(
+                    agrupar(dsb, ["DS_CARGO", "NR_VOTAVEL", "NM_VOTAVEL"])["QT_VOTOS"].sum()
                     .sort_values(["DS_CARGO", "QT_VOTOS"], ascending=[True, False])
                     .reset_index(drop=True)
                 )

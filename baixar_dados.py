@@ -1,5 +1,5 @@
 """
-Passo 1 (versão 3): baixa os dados do TSE para a Bahia - eleições de 2022 e 2026.
+Passo 1 (versão 3): baixa os dados do TSE para a Bahia - eleições de 2018, 2022 e 2026.
 
 Para cada ano, baixa:
   - Votação por seção eleitoral (BA)
@@ -26,7 +26,7 @@ import pandas as pd
 import requests
 
 UF = "BA"
-ANOS = ["2022", "2026"]
+ANOS = ["2018", "2022", "2026"]
 BASE = "https://cdn.tse.jus.br/estatistica/sead/odsele"
 PASTA_DADOS = Path("dados")
 ATUALIZAR = "--atualizar" in sys.argv
