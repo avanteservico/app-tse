@@ -57,6 +57,12 @@ html, body, [class*="st-"], .stMarkdown, button, input, textarea, select {
 h1, h2, h3 { font-family: 'Jost', system-ui, sans-serif !important; font-weight: 600 !important; color: var(--texto); }
 [data-testid="stSidebar"] { background: #ebe7de; border-right: 1px solid var(--borda); }
 
+/* esconde os itens da barra do topo (Stop, Share, favoritar, editar, GitHub, menu);
+   a barra em si fica, porque o botão de reabrir o menu lateral está dentro dela */
+[data-testid="stToolbarActions"], [data-testid="stStatusWidget"], [data-testid="stAppDeployButton"],
+[data-testid="stMainMenu"], [data-testid="stDecoration"] { display: none !important; }
+header[data-testid="stHeader"] { background: transparent; }
+
 /* cartões: métricas, expansores, tabelas, gráficos */
 [data-testid="stMetric"] {
   background: var(--cartao); border: 1px solid var(--borda); border-radius: 14px; padding: 14px 18px;
