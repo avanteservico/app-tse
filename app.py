@@ -925,15 +925,12 @@ def misturar(cor1, cor2, t):
     return [int(round(a + (b - a) * t)) for a, b in zip(cor1, cor2)]
 
 
-def cor_do_ponto(valor, vmax, modo):
+def cor_do_ponto(valor, vmax):
     """Cor e raio (em metros) do círculo: quanto maior o valor, maior e mais escuro."""
     if valor == 0:
         return [150, 150, 150], 40
     forca = (abs(valor) / vmax) ** 0.6
     raio = 60 + 340 * math.sqrt(abs(valor) / vmax)
-    if modo == "diferenca":
-        alvo = [33, 102, 172] if valor > 0 else [178, 24, 43]
-        return misturar([222, 222, 222], alvo, forca), raio
     return misturar([254, 224, 144], [165, 0, 38], forca), raio
 
 
@@ -961,8 +958,8 @@ def entrada_mapa(escola, bairro, zona, endereco, lat, lon, valor, detalhe):
     return df
 
 
-def desenhar_mapa(entrada, modo="votos"):
-    """Desenha um círculo por escola (tamanho e cor = valor). modo: 'votos' ou 'diferenca'."""
+def desenhar_mapa(entrada):
+    """Desenha um círculo por escola (tamanho e cor = votos)."""
     pontos = entrada.dropna(subset=["lat", "lon"])
     if centro_mun is not None and not pd.isna(centro_mun[0]):
         perto = (
@@ -977,7 +974,7 @@ def desenhar_mapa(entrada, modo="votos"):
         return
 
     vmax = float(pontos["valor"].abs().max()) or 1.0
-    cores = [cor_do_ponto(v, vmax, modo) for v in pontos["valor"]]
+    cores = [cor_do_ponto(v, vmax) for v in pontos["valor"]]
     pontos["r"] = [c[0][0] for c in cores]
     pontos["g"] = [c[0][1] for c in cores]
     pontos["b"] = [c[0][2] for c in cores]
@@ -991,12 +988,8 @@ def desenhar_mapa(entrada, modo="votos"):
     )
     zoom = zoom_para(extensao)
 
-    if modo == "diferenca":
-        st.caption("Azul = ganhou votos; vermelho = perdeu votos; cinza = sem mudança. "
-                   "Tamanho = tamanho da diferença. Passe o mouse sobre o círculo para ver os detalhes.")
-    else:
-        st.caption("Tamanho e cor = votos (maior e mais escuro = mais votos; cinza = nenhum voto). "
-                   "Passe o mouse sobre o círculo para ver a escola.")
+    st.caption("Tamanho e cor = votos (maior e mais escuro = mais votos; cinza = nenhum voto). "
+               "Passe o mouse sobre o círculo para ver a escola.")
     if sem_coordenada:
         st.caption(f"{sem_coordenada} escola(s) sem coordenadas válidas no arquivo do TSE não aparecem no mapa.")
 
@@ -1201,25 +1194,14 @@ else:
     centro_mun = (escolas_todas["LAT"].median(), escolas_todas["LON"].median())
     tem_bairro =bool((escolas_todas["BAIRRO"] != SEM_BAIRRO).any())
 
-    # ---- bairro / localidade (pesquisa + lista)
+    # ---- bairro / localidade (lista)
     if tem_bairro:
         todos_bairros = sorted(escolas_todas["BAIRRO"].unique(), key=normalizar)
-        busca = painel.text_input("Pesquisar bairro/localidade", placeholder="ex.: centro")
-        if busca.strip():
-            lista = [b for b in todos_bairros if normalizar(busca) in normalizar(b)]
-            rotulo_todos = f'Todos que contêm "{busca.strip()}" ({len(lista)})'
-        else:
-            lista = todos_bairros
-            rotulo_todos = TODOS_BAIRROS
-        bairro_sel = painel.selectbox("Bairro/localidade", [rotulo_todos] + lista)
-        if busca.strip() and not lista:
-            painel.warning("Nenhum bairro encontrado com esse texto.")
-        if bairro_sel != rotulo_todos:
+        # a própria lista aceita digitar para procurar o bairro
+        bairro_sel = painel.selectbox("Bairro/localidade", [TODOS_BAIRROS] + todos_bairros)
+        if bairro_sel != TODOS_BAIRROS:
             bairros_alvo = {normalizar(bairro_sel)}
             bairro_txt = bairro_sel
-        elif busca.strip():
-            bairros_alvo = {normalizar(b) for b in lista}
-            bairro_txt = f'bairros com "{busca.strip()}"'
     else:
         painel.info("Bairro/localidade não disponível nos dados deste município/ano.")
 
@@ -1731,24 +1713,6 @@ def mostrar_candidato(candidato):
                             f"{sem_par} escola(s) existem em só um dos anos (coluna Situação). "
                             "Pode ser escola nova, desativada ou com nome/número alterado."
                         )
-
-                    maiores = comp.reindex(comp["Diferença"].abs().sort_values(ascending=False).index).head(15)
-                    if not maiores.empty:
-                        maiores = maiores.assign(Rótulo=maiores["Escola"] + " (zona " + maiores["Zona"] + ")")
-                        st.markdown(f"**15 maiores diferenças ({novo} menos {antigo})**")
-                        st.bar_chart(maiores.set_index("Rótulo")["Diferença"])
-
-                    st.markdown(f"**Mapa da diferença ({novo} menos {antigo})**")
-                    texto_dif = comp["Diferença"].map(lambda x: f"{x:+d}")
-                    desenhar_mapa(
-                        entrada_mapa(
-                            comp["Escola"], comp["Bairro/localidade"], comp["Zona"], "",
-                            comp["LAT"], comp["LON"], comp["Diferença"],
-                            f"{antigo}: " + comp[v_ant].map(formatar) + " | "
-                            + f"{novo}: " + comp[v_nov].map(formatar) + " | diferença: " + texto_dif,
-                        ),
-                        modo="diferenca",
-                    )
 
                     st.download_button(
                         "Baixar comparação (CSV)",
