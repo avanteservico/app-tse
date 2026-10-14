@@ -16,6 +16,8 @@ from pathlib import Path
 
 import pandas as pd
 
+import preparar_candidatos
+
 PASTA_DADOS = Path("dados")
 PASTA_APP = Path("dados_app")
 LIMITE_MB = 90   # o GitHub recusa arquivos acima de 100 MB
@@ -49,6 +51,10 @@ def main():
             grandes.append((arquivo.stem, tamanho))
         if i % 50 == 0 or i == len(municipios):
             print(f"  {i} de {len(municipios)} municípios compactados")
+
+    print("\nFotos, partido e situação dos candidatos:")
+    preparar_candidatos.main()
+    total += (PASTA_APP / "candidatos.parquet").stat().st_size
 
     print(f"\nPronto! Pasta {PASTA_APP}: {total / 1024 / 1024:.0f} MB no total.")
     for codigo, tamanho in grandes:

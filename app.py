@@ -104,8 +104,15 @@ h1, h2, h3 { font-family: 'Jost', system-ui, sans-serif !important; font-weight:
 .cand-foto {
   width: 54px; height: 70px; border-radius: 6px; background: #e4ddcf; color: #6b5f4b;
   display: flex; align-items: center; justify-content: center; font-weight: 600; font-size: 1.1rem;
-  border: 1px solid var(--borda);
+  border: 1px solid var(--borda); overflow: hidden;
 }
+.cand-foto img { width: 100%; height: 100%; object-fit: cover; border-radius: 5px; display: block; }
+.selo {
+  display: inline-block; padding: 1px 8px; border-radius: 6px; font-weight: 600; font-size: .85rem;
+  margin-right: 4px; color: #fff; background: var(--verde);
+}
+.selo.turno2 { background: var(--azul); }
+.selo.suplente { background: #e4ddcf; color: #5a5245; }
 .cand-pos { color: var(--suave); padding-top: 3px; text-align: center; }
 .cand-nome { font-size: 1.12rem; font-weight: 500; color: var(--texto); line-height: 1.3; }
 .cand-meta { color: #4a463f; font-size: .92rem; margin-top: 14px; }
@@ -193,15 +200,25 @@ def faixa_contexto(itens):
     st.markdown(f'<div class="faixa">{sep.join(partes)}</div>', unsafe_allow_html=True)
 
 
-def lista_candidatos(tabela, total, aviso):
-    """Lista no estilo 'ranking': iniciais, posição, nome, partido · nº, votos, % e barra verde."""
+SELOS = {"Eleito": "", "2º turno": "turno2", "Suplente": "suplente"}
+
+
+def lista_candidatos(tabela, total, aviso, fotos):
+    """Lista no estilo 'ranking': foto, posição, nome, situação, partido · nº, votos, % e barra verde."""
     linhas = []
     for c in tabela.itertuples(index=False):
         pct = c.Votos / total * 100 if total else 0
-        meta = f"{html.escape(c.Partido)} · nº {html.escape(c.Número)}" if c.Partido else f"nº {html.escape(c.Número)}"
+        meta = [html.escape(c.Partido)] if c.Partido else []
+        meta.append(f"nº {html.escape(c.Número)}")
+        meta = " · ".join(meta)
+        if c.Situação in SELOS:
+            meta = f'<span class="selo {SELOS[c.Situação]}">{c.Situação}</span>· {meta}'
+        foto = fotos.get(c.Número)
+        foto = (f'<img src="data:image/jpeg;base64,{foto}" alt="" loading="lazy">' if foto
+                else html.escape(iniciais(c.Candidato)))
         linhas.append(
             '<div class="cand">'
-            f'<div class="cand-foto">{html.escape(iniciais(c.Candidato))}</div>'
+            f'<div class="cand-foto">{foto}</div>'
             f'<div class="cand-pos">{c.Pos}</div>'
             f'<div><div class="cand-nome">{html.escape(c.Candidato)}</div><div class="cand-meta">{meta}</div></div>'
             f'<div class="cand-votos"><b>{formatar(c.Votos)}</b><span>{formatar_pct(pct)}</span></div>'
@@ -236,6 +253,28 @@ def carregar_resumo():
     df = ler_tabela(arquivo_resumo())
     df["QT_VOTOS"] = pd.to_numeric(df["QT_VOTOS"], errors="coerce").fillna(0).astype(int)
     return so_nominais(df)
+
+
+SITUACOES = {
+    "ELEITO": "Eleito", "ELEITO POR QP": "Eleito", "ELEITO POR MEDIA": "Eleito",
+    "2O TURNO": "2º turno", "2 TURNO": "2º turno", "SUPLENTE": "Suplente", "NAO ELEITO": "Não eleito",
+}
+
+
+@st.cache_data
+def carregar_candidatos():
+    """{(ano, turno, cargo, número): (sigla do partido, situação, foto em base64)} - feito pelo preparar_candidatos.py."""
+    arquivo = PASTA_APP / "candidatos.parquet"
+    if not arquivo.exists():
+        return {}
+    df = pd.read_parquet(arquivo)
+    return {
+        (a, t, normalizar(c), n): (p, SITUACOES.get(normalizar(s).replace("º", "O"), ""), f)
+        for a, t, c, n, p, s, f in zip(
+            df["ANO"], df["NR_TURNO"], df["DS_CARGO"], df["NR_CANDIDATO"],
+            df["SG_PARTIDO"], df["DS_SIT_TOT_TURNO"], df["FOTO"],
+        )
+    }
 
 
 @st.cache_data
@@ -769,10 +808,19 @@ if resultado.empty:
 total = int(resultado["QT_VOTOS"].sum())
 resultado["% dos votos nominais"] = (resultado["QT_VOTOS"] / total * 100).round(2) if total else 0
 partidos = carregar_partidos()
+cadastro = carregar_candidatos()
+cargo_n = normalizar(cargo)
+do_cadastro = [
+    cadastro.get((ano, turno, cargo_n, n)) or cadastro.get((ano, "1", cargo_n, n)) or ("", "", "")
+    for n in resultado["NR_VOTAVEL"]
+]
+fotos = {n: c[2] for n, c in zip(resultado["NR_VOTAVEL"], do_cadastro) if c[2]}
 resultado.insert(0, "Pos.", range(1, len(resultado) + 1))
 resultado.insert(3, "Partido", [
-    partidos.get((ano, str(n)[:2])) or SIGLAS_POR_NUMERO.get(str(n)[:2], "") for n in resultado["NR_VOTAVEL"]
+    c[0] or partidos.get((ano, str(n)[:2])) or SIGLAS_POR_NUMERO.get(str(n)[:2], "")
+    for n, c in zip(resultado["NR_VOTAVEL"], do_cadastro)
 ])
+resultado.insert(4, "Situação", [c[1] for c in do_cadastro])
 resultado = resultado.rename(
     columns={"NR_VOTAVEL": "Número", "NM_VOTAVEL": "Candidato", "QT_VOTOS": "Votos"}
 )
@@ -847,7 +895,7 @@ partido_sel = o2.selectbox("Partido", [TODOS_PARTIDOS] + lista_partidos, label_v
 
 visivel = resultado
 if texto_filtro.strip():
-    alvo = (visivel["Candidato"] + " " + visivel["Partido"] + " " + visivel["Número"]).map(normalizar)
+    alvo = (visivel["Candidato"] + " " + visivel["Partido"] + " " + visivel["Número"] + " " + visivel["Situação"]).map(normalizar)
     visivel = visivel[alvo.str.contains(normalizar(texto_filtro), regex=False)]
 if partido_sel != TODOS_PARTIDOS:
     visivel = visivel[visivel["Partido"] == partido_sel]
@@ -866,8 +914,8 @@ else:
         "Para ver a votação de um candidato <b>por escola</b>, clique nele na <b>tabela completa</b> abaixo."
     )
     lista_candidatos(
-        visivel.head(qtd)[["Pos.", "Candidato", "Número", "Partido", "Votos"]].rename(columns={"Pos.": "Pos"}),
-        total, aviso,
+        visivel.head(qtd)[["Pos.", "Candidato", "Número", "Partido", "Situação", "Votos"]].rename(columns={"Pos.": "Pos"}),
+        total, aviso, fotos,
     )
     if len(visivel) > qtd:
         if st.button(f"Mostrar mais ({len(visivel) - qtd} restantes)", key=f"mais|{qtd_chave}"):

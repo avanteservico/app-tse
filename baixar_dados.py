@@ -5,6 +5,7 @@ Para cada ano, baixa:
   - Votação por seção eleitoral (BA)
   - Eleitorado por local de votação (Brasil todo; é daqui que vem o BAIRRO das escolas)
   - Cadastro de candidatos (Brasil todo; é daqui que vem o NOME DE URNA)
+  - Fotos dos candidatos (BA)
 
 Antes de rodar, instale as bibliotecas (uma vez só):
     pip install requests pandas
@@ -49,6 +50,11 @@ def lista_de_arquivos():
             f"Cadastro de candidatos {ano} (traz o nome de urna)",
             f"{BASE}/consulta_cand/consulta_cand_{ano}.zip",
             PASTA_DADOS / f"consulta_cand_{ano}.zip",
+        ))
+        arquivos.append((
+            f"Fotos dos candidatos {ano} ({UF})",
+            f"https://cdn.tse.jus.br/estatistica/sead/eleicoes/eleicoes{ano}/fotos/foto_cand{ano}_{UF}_div.zip",
+            PASTA_DADOS / f"foto_cand{ano}_{UF}_div.zip",
         ))
     return arquivos
 
@@ -132,6 +138,8 @@ def main():
         print()
         if not baixar(nome, url, destino):
             faltando.append(nome)
+            continue
+        if destino.name.startswith("foto_cand"):   # fotos: quem usa é o preparar_candidatos.py
             continue
         csv = descompactar(destino)
         if csv is not None:

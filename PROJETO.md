@@ -25,6 +25,7 @@ App em **Streamlit** sobre os dados abertos do **TSE** (Tribunal Superior Eleito
 | `preparar_dados.py` | Transforma os CSVs grandes (~4 milhões de linhas, lidos em pedaços) em arquivos pequenos: `dados/votos_por_municipio.csv`, `dados/municipios/<cod>.csv` (por seção, todos os anos), `dados/municipios_indice.csv`. Junta bairro/coordenadas e troca o nome do candidato pelo nome de urna. |
 | `app.py` | O app Streamlit. |
 | `compactar_dados.py` | Converte o resultado do `preparar_dados.py` para Parquet na pasta `dados_app/` (1,4 GB → ~77 MB). É a pasta `dados_app/` que vai para o GitHub e é usada pelo app publicado (o app usa `dados_app/` se existir, senão `dados/`). |
+| `preparar_candidatos.py` | Lê o cadastro de candidatos e as fotos do TSE (`foto_cand<ano>_BA_div.zip`) e grava `dados_app/candidatos.parquet`: sigla do partido, situação (eleito/suplente/2º turno) e foto em miniatura (base64). É chamado no fim do `compactar_dados.py`. Precisa de `pillow` (só no computador). |
 | `supabase_criar_tabela.sql` | Cria a tabela `bairros_informados` no Supabase (com os bairros já cadastrados). Rodar uma vez no SQL Editor. |
 | `requirements.txt` | Bibliotecas para o Streamlit Cloud. |
 | `dados/bairros_informados.csv` | Criado pelo app (tela de cadastro). Colunas: `CD_MUNICIPIO, NR_ZONA, NM_LOCAL_N, NM_LOCAL_VOTACAO, BAIRRO`. É trabalho do usuário: **nunca apagar nem sobrescrever** sem avisar. |
@@ -45,6 +46,7 @@ Repetir os dois primeiros quando o TSE atualizar os arquivos (ex.: depois do 2º
 - `votacao_secao/votacao_secao_{ano}_BA.zip`
 - `eleitorado_locais_votacao/eleitorado_local_votacao_{ano}.zip` (todas as UFs)
 - `consulta_cand/consulta_cand_{ano}.zip` (um CSV por UF + BRASIL; usa-se o `_BA.csv`)
+- Fotos: `https://cdn.tse.jus.br/estatistica/sead/eleicoes/eleicoes{ano}/fotos/foto_cand{ano}_BA_div.zip` (arquivos `FBA<SQ_CANDIDATO>_div.jpg`)
 
 Formato dos CSVs: separador `;`; codificação **latin-1 em 2022, mas 2026 pode ser UTF-8** → os scripts detectam sozinhos (`detectar_encoding`). Colunas da votação por seção usadas: `NR_TURNO, CD_MUNICIPIO, NM_MUNICIPIO, NR_ZONA, NR_SECAO, DS_CARGO, NR_VOTAVEL, NM_VOTAVEL, QT_VOTOS, NR_LOCAL_VOTACAO, SQ_CANDIDATO, NM_LOCAL_VOTACAO, DS_LOCAL_VOTACAO_ENDERECO`.
 
@@ -54,6 +56,7 @@ Formato dos CSVs: separador `;`; codificação **latin-1 em 2022, mas 2026 pode 
 - **Bairro e coordenadas** vêm de outro arquivo (eleitorado por local de votação) e são ligados por (ano, município, zona, local) ignorando zeros à esquerda. Coordenadas: vírgula decimal convertida; fora do Brasil (lat −34..6, lon −74..−34) é descartada; no app, escola a mais de 1,2° da mediana do município é ignorada no mapa (`LIMITE_GRAUS`).
 - **Bairro informado pelo usuário** (`dados/bairros_informados.csv`) tem **prioridade** sobre o do TSE; vale para todos os anos; chave = município + zona (sem zeros) + nome da escola normalizado (sem acento, maiúsculo). Vazio = volta ao do TSE. O cache do app é invalidado pela data do arquivo (`versao_bairros()`).
 - **Comparação 2022 × 2026**: candidato correspondente achado pelo **nome de urna normalizado**; se não achar, o usuário escolhe na lista. Escolas pareadas por "nome + zona" ou "número do local + zona" (o usuário escolhe). Tabela: Votos antigo/novo, Diferença, Variação (%), Situação (nos dois anos / só em um).
+- **Lista de candidatos** (visual tipo ranking): foto, posição, nome de urna, selo (Eleito/2º turno/Suplente), partido · nº, votos, % e barra. Partido e situação vêm do cadastro (`SG_PARTIDO`, `DS_SIT_TOT_TURNO`), ligados por ano + turno + cargo + número; sem cadastro, o partido sai do voto de legenda. Tema em `.streamlit/config.toml`.
 - Texto de interface em português; tabelas com cabeçalhos em português.
 
 ## 7. Estrutura do `app.py`
