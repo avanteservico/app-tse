@@ -25,8 +25,7 @@ ARQ_INDICE = PASTA_APP / "municipios_indice.csv" if (PASTA_APP / "municipios_ind
 ARQ_BAIRROS = PASTA / "bairros_informados.csv"   # bairros que você informa (têm prioridade sobre o TSE)
 TABELA_BAIRROS = "bairros_informados"            # mesma coisa, no Supabase (quando o app está na internet)
 COLS_BAIRROS = ["CD_MUNICIPIO", "NR_ZONA", "NM_LOCAL_N", "NM_LOCAL_VOTACAO", "BAIRRO"]
-TELA_VOTACAO = "Votação"
-TELA_CADASTRO = "Cadastrar bairros das escolas"
+ROTA_CADASTRO = "cadastrobairro"   # o cadastro de bairros só abre pelo endereço .../cadastrobairro
 COL_INFORMADO = "Bairro informado por você"
 
 TODOS = "Todos os municípios"
@@ -42,6 +41,24 @@ LIMITE_GRAUS = 1.2   # escola a mais de ~130 km do centro do município = coorde
 centro_mun = None    # (latitude, longitude) mediana das escolas do município escolhido
 
 st.set_page_config(page_title="Eleições - Bahia", layout="wide")
+
+
+def _pagina_votacao():
+    pass
+
+
+def _pagina_cadastro():
+    pass
+
+
+# duas páginas sem menu de navegação: a votação (endereço principal) e o cadastro de bairros (/cadastrobairro)
+pagina = st.navigation(
+    [st.Page(_pagina_votacao, title="Eleições - Bahia", default=True),
+     st.Page(_pagina_cadastro, title="Cadastrar bairros - Eleições Bahia", url_path=ROTA_CADASTRO)],
+    position="hidden",
+)
+pagina.run()
+EH_CADASTRO = pagina.url_path == ROTA_CADASTRO
 
 # ------------------------------------------------------------- aparência
 ESTILO = """
@@ -1084,11 +1101,7 @@ if not arquivo_resumo().exists() or not ARQ_INDICE.exists():
 dados = carregar_resumo()
 indice = carregar_indice()
 
-if CELULAR:
-    tela = st.radio("Tela", [TELA_VOTACAO, TELA_CADASTRO], horizontal=True, label_visibility="collapsed")
-else:
-    tela = st.sidebar.radio("Tela", [TELA_VOTACAO, TELA_CADASTRO])
-if tela == TELA_CADASTRO:
+if EH_CADASTRO:
     tela_cadastro(indice)
     st.stop()
 
