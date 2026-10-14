@@ -1,0 +1,7 @@
+# Dados brutos e intermediários do TSE (muito grandes para o GitHub).
+# O app publicado usa a pasta dados_app/ (gerada por compactar_dados.py).
+dados/
+*.zip
+*.part
+__pycache__/
+.streamlit/secrets.toml
