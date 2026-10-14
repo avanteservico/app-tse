@@ -54,7 +54,7 @@ def main():
 
     print("\nFotos, partido e situação dos candidatos:")
     preparar_candidatos.main()
-    total += (PASTA_APP / "candidatos.parquet").stat().st_size
+    total += sum(f.stat().st_size for f in [PASTA_APP / "candidatos.parquet", *(PASTA_APP / "fotos").rglob("*.parquet")])
 
     print(f"\nPronto! Pasta {PASTA_APP}: {total / 1024 / 1024:.0f} MB no total.")
     for codigo, tamanho in grandes:

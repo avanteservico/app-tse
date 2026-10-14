@@ -9,7 +9,7 @@
 - Seja honesto sobre o que foi e o que não foi testado (seção 8).
 
 ## 2. Objetivo do projeto
-App em **Streamlit** sobre os dados abertos do **TSE** (Tribunal Superior Eleitoral), para a **Bahia**, eleições **2018**, **2022** e **2026 (1º turno)** (2018 incluído em 14/10/2026; 2016, 2020 e 2024 — municipais — ainda não, ver backlog):
+App em **Streamlit** sobre os dados abertos do **TSE** (Tribunal Superior Eleitoral), para a **Bahia**, eleições gerais **2018**, **2022**, **2026 (1º turno)** e municipais **2016**, **2020**, **2024** (incluídas em 14/10/2026):
 - Filtrar por ano, turno, cargo, município, bairro/localidade, escola e seção.
 - Mostrar **sempre a votação nominal** (sem branco, nulo e voto de legenda).
 - Clicar no candidato → votação dele **por escola** no município.
@@ -25,7 +25,7 @@ App em **Streamlit** sobre os dados abertos do **TSE** (Tribunal Superior Eleito
 | `preparar_dados.py` | Transforma os CSVs grandes (~4 milhões de linhas, lidos em pedaços) em arquivos pequenos: `dados/votos_por_municipio.csv`, `dados/municipios/<cod>.csv` (por seção, todos os anos), `dados/municipios_indice.csv`. Junta bairro/coordenadas e troca o nome do candidato pelo nome de urna. |
 | `app.py` | O app Streamlit. |
 | `compactar_dados.py` | Converte o resultado do `preparar_dados.py` para Parquet na pasta `dados_app/` (1,4 GB → ~77 MB). É a pasta `dados_app/` que vai para o GitHub e é usada pelo app publicado (o app usa `dados_app/` se existir, senão `dados/`). |
-| `preparar_candidatos.py` | Lê o cadastro de candidatos e as fotos do TSE (`foto_cand<ano>_BA_div.zip`) e grava `dados_app/candidatos.parquet`: sigla do partido, situação (eleito/suplente/2º turno) e foto em miniatura (base64). É chamado no fim do `compactar_dados.py`. Precisa de `pillow` (só no computador). |
+| `preparar_candidatos.py` | Lê o cadastro de candidatos e as fotos do TSE (`foto_cand<ano>_BA_div.zip`) e grava `dados_app/candidatos.parquet` (sigla do partido, situação eleito/suplente/2º turno, `SG_UE`) e as fotos em miniatura (JPEG 81×108, binário) em `dados_app/fotos/<ano>/<UE>.parquet` — UE = `BA` nas gerais e o código do município nas municipais; o app só carrega as do município necessário. É chamado no fim do `compactar_dados.py`. Precisa de `pillow` (só no computador). |
 | `supabase_criar_tabela.sql` | Cria a tabela `bairros_informados` no Supabase (com os bairros já cadastrados). Rodar uma vez no SQL Editor. |
 | `requirements.txt` | Bibliotecas para o Streamlit Cloud. |
 | `dados/bairros_informados.csv` | Criado pelo app (tela de cadastro). Colunas: `CD_MUNICIPIO, NR_ZONA, NM_LOCAL_N, NM_LOCAL_VOTACAO, BAIRRO`. É trabalho do usuário: **nunca apagar nem sobrescrever** sem avisar. |
@@ -57,6 +57,9 @@ Formato dos CSVs: separador `;`; codificação **latin-1 em 2022, mas 2026 pode 
 - **Bairro informado pelo usuário** (`dados/bairros_informados.csv`) tem **prioridade** sobre o do TSE; vale para todos os anos; chave = município + zona (sem zeros) + nome da escola normalizado (sem acento, maiúsculo). Vazio = volta ao do TSE. O cache do app é invalidado pela data do arquivo (`versao_bairros()`).
 - **Comparação 2022 × 2026**: candidato correspondente achado pelo **nome de urna normalizado**; se não achar, o usuário escolhe na lista. Escolas pareadas por "nome + zona" ou "número do local + zona" (o usuário escolhe). Tabela: Votos antigo/novo, Diferença, Variação (%), Situação (nos dois anos / só em um).
 - **Lista de candidatos** (visual tipo ranking): foto, posição, nome de urna, selo (Eleito/2º turno/Suplente), partido · nº, votos, % e barra. Partido e situação vêm do cadastro (`SG_PARTIDO`, `DS_SIT_TOT_TURNO`), ligados por ano + turno + cargo + número; sem cadastro, o partido sai do voto de legenda. Tema em `.streamlit/config.toml`.
+- **Eleições municipais**: voto de legenda de **vereador** também é tirado (`so_nominais`). Cadastro/fotos ligados por ano + turno + cargo + **UE** + número (números de prefeito/vereador se repetem entre cidades). Com "Todos os municípios" e cargo municipal, o ranking tem uma linha por candidato **e cidade** (coluna Município) e a % é dentro da própria cidade. A faixa diz "Eleição Municipal" nos anos múltiplos de 4.
+- `preparar_dados.py` padroniza `DS_CARGO` com `.str.title()` (2016 vem em maiúsculas). A comparação sugere a eleição mais próxima do **mesmo tipo** (municipal↔municipal, geral↔geral). O cadastro de candidatos é carregado só do ano escolhido (`carregar_candidatos(ano)`).
+- A API do DivulgaCand (fotos online do TSE) responde 403 a acessos de fora; por isso as fotos ficam no projeto.
 - Texto de interface em português; tabelas com cabeçalhos em português.
 
 ## 7. Estrutura do `app.py`
@@ -80,7 +83,6 @@ Tela na barra lateral (`Votação` | `Cadastrar bairros das escolas`) → filtro
 - Testado localmente (AppTest, dados reais): abrir o app, Itamaraju com bairros informados, Salvador, tela de cadastro. **Não testado**: gravação no Supabase de verdade e memória do Streamlit Cloud com Salvador (~600 MB na memória).
 
 ## 9. Backlog de ideias (só se o usuário pedir)
-- **Eleições municipais 2016, 2020, 2024** (avaliadas em 14/10/2026; arquivos do TSE existem com as mesmas colunas). Falta: tirar voto de legenda também de **vereador** em `so_nominais`/`carregar_partidos`; ligar cadastro/fotos também pelo município (`SG_UE`), pois números de vereador se repetem entre cidades; fotos separadas por ano/município (ZIPs de 1 GB, dezenas de milhares de candidatos); exigir município para vereador em "Todos os municípios".
 - Importar bairros a partir de planilha (CSV/Excel) preenchida fora do app.
 - Filtro/mapa por zona eleitoral; exportar relatório por bairro.
 - Outros turnos/cargos/estados; deixar o `UF` configurável.

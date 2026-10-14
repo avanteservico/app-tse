@@ -1,5 +1,5 @@
 """
-Passo 5a: prepara os dados para o app (anos 2018, 2022 e 2026, com bairro e coordenadas das escolas).
+Passo 5a: prepara os dados para o app (anos 2016 a 2026, com bairro e coordenadas das escolas).
 
 Gera, dentro da pasta "dados":
   1) votos_por_municipio.csv  -> resumo por município e ano (telas gerais)
@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pandas as pd
 
-ANOS = ["2018", "2022", "2026"]
+ANOS = ["2016", "2018", "2020", "2022", "2024", "2026"]
 PASTA_DADOS = Path("dados")
 PASTA_MUNICIPIOS = PASTA_DADOS / "municipios"
 SAIDA_RESUMO = PASTA_DADOS / "votos_por_municipio.csv"
@@ -104,6 +104,7 @@ def processar_resultados():
         for i, parte in enumerate(leitor, start=1):
             parte["QT_VOTOS"] = pd.to_numeric(parte["QT_VOTOS"], errors="coerce").fillna(0).astype(int)
             parte["ANO"] = ano
+            parte["DS_CARGO"] = parte["DS_CARGO"].str.strip().str.title()   # 2016 vem "PREFEITO"; os outros, "Prefeito"
 
             if urnas is not None:
                 sq = parte["SQ_CANDIDATO"].str.strip()

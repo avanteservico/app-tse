@@ -8,6 +8,7 @@ Para rodar:
 Sempre mostra a votação NOMINAL: sem votos brancos, nulos e de legenda.
 """
 
+import base64
 import html
 import math
 import time
@@ -150,8 +151,8 @@ def so_nominais(df):
     """Mantém só votos em candidatos (tira branco, nulo e voto de legenda)."""
     numero = df["NR_VOTAVEL"].astype(str)
     mascara = ~numero.isin(["95", "96", "97", "98"])
-    deputado = df["DS_CARGO"].str.contains("deputado", case=False, na=False)
-    mascara &= ~(deputado & (numero.str.len() <= 2))  # legenda = número do partido (2 dígitos)
+    proporcional = df["DS_CARGO"].str.contains("deputado|vereador", case=False, na=False, regex=True)
+    mascara &= ~(proporcional & (numero.str.len() <= 2))  # legenda = número do partido (2 dígitos)
     return df[mascara]
 
 
@@ -179,7 +180,7 @@ SIGLAS = {
     "PARTIDO RENOVACAO DEMOCRATICA": "PRD", "PARTIDO SOCIALISTA DOS TRABALHADORES UNIFICADO": "PSTU",
     "PARTIDO DA CAUSA OPERARIA": "PCO",
 }
-# partidos que às vezes não têm candidato a deputado (então não aparecem nos votos de legenda)
+# partidos que às vezes não têm candidato a deputado/vereador (então não aparecem nos votos de legenda)
 SIGLAS_POR_NUMERO = {"16": "PSTU", "21": "PCB", "29": "PCO"}
 
 
@@ -190,10 +191,17 @@ def iniciais(nome):
     return (partes[0][0] + (partes[-1][0] if len(partes) > 1 else "")).upper()
 
 
-def faixa_contexto(itens):
+CARGOS_MUNICIPAIS = {"PREFEITO", "VEREADOR"}
+
+
+def eh_municipal(cargo):
+    return normalizar(cargo) in CARGOS_MUNICIPAIS
+
+
+def faixa_contexto(itens, tipo):
     """Faixa com borda azul: 'Eleição Geral · 2026 · Deputado Federal · Bahia (BA)'."""
     sep = '<span class="sep">·</span>'
-    partes = ['<b class="eleicao">Eleição Geral</b>']
+    partes = [f'<b class="eleicao">{tipo}</b>']
     for texto, destaque in itens:
         texto = html.escape(str(texto))
         partes.append(f"<b>{texto}</b>" if destaque else texto)
@@ -203,17 +211,19 @@ def faixa_contexto(itens):
 SELOS = {"Eleito": "", "2º turno": "turno2", "Suplente": "suplente"}
 
 
-def lista_candidatos(tabela, total, aviso, fotos):
+def lista_candidatos(tabela, aviso, foto_de):
     """Lista no estilo 'ranking': foto, posição, nome, situação, partido · nº, votos, % e barra verde."""
     linhas = []
     for c in tabela.itertuples(index=False):
-        pct = c.Votos / total * 100 if total else 0
+        pct = c.Pct
         meta = [html.escape(c.Partido)] if c.Partido else []
         meta.append(f"nº {html.escape(c.Número)}")
+        if getattr(c, "Município", ""):
+            meta.append(html.escape(c.Município))
         meta = " · ".join(meta)
         if c.Situação in SELOS:
             meta = f'<span class="selo {SELOS[c.Situação]}">{c.Situação}</span>· {meta}'
-        foto = fotos.get(c.Número)
+        foto = foto_de(c.Pos)
         foto = (f'<img src="data:image/jpeg;base64,{foto}" alt="" loading="lazy">' if foto
                 else html.escape(iniciais(c.Candidato)))
         linhas.append(
@@ -261,28 +271,44 @@ SITUACOES = {
 }
 
 
-@st.cache_data
-def carregar_candidatos():
-    """{(ano, turno, cargo, número): (sigla do partido, situação, foto em base64)} - feito pelo preparar_candidatos.py."""
+@st.cache_data(max_entries=3)
+def carregar_candidatos(ano):
+    """Cadastro de um ano: {(ano, turno, cargo, UE, número): (sigla do partido, situação, SQ_CANDIDATO)} - feito pelo preparar_candidatos.py.
+    UE = "BA" nas eleições gerais; nas municipais, o código do município (o mesmo número de vereador
+    existe em várias cidades)."""
     arquivo = PASTA_APP / "candidatos.parquet"
     if not arquivo.exists():
         return {}
-    df = pd.read_parquet(arquivo)
+    df = pd.read_parquet(arquivo, filters=[("ANO", "==", ano)])
+    if "SG_UE" not in df.columns:   # arquivo antigo: rode python compactar_dados.py de novo
+        return {}
+    situacoes = {s: SITUACOES.get(normalizar(s), "") for s in df["DS_SIT_TOT_TURNO"].unique()}
+    cargos = {c: normalizar(c) for c in df["DS_CARGO"].unique()}
     return {
-        (a, t, normalizar(c), n): (p, SITUACOES.get(normalizar(s).replace("º", "O"), ""), f)
-        for a, t, c, n, p, s, f in zip(
-            df["ANO"], df["NR_TURNO"], df["DS_CARGO"], df["NR_CANDIDATO"],
-            df["SG_PARTIDO"], df["DS_SIT_TOT_TURNO"], df["FOTO"],
+        (a, t, cargos[c], u, n): (p, situacoes[s], q)
+        for a, t, c, u, n, p, s, q in zip(
+            df["ANO"], df["NR_TURNO"], df["DS_CARGO"], df["SG_UE"], df["NR_CANDIDATO"],
+            df["SG_PARTIDO"], df["DS_SIT_TOT_TURNO"], df["SQ_CANDIDATO"],
         )
     }
 
 
+@st.cache_data(max_entries=60)
+def carregar_fotos(ano, ue):
+    """{SQ_CANDIDATO: foto em base64} de um ano e UE (estado ou município)."""
+    arquivo = PASTA_APP / "fotos" / str(ano) / f"{ue}.parquet"
+    if not arquivo.exists():
+        return {}
+    df = pd.read_parquet(arquivo)
+    return {sq: base64.b64encode(foto).decode("ascii") for sq, foto in zip(df["SQ_CANDIDATO"], df["FOTO"])}
+
+
 @st.cache_data
 def carregar_partidos():
-    """{(ano, número do partido): sigla}, a partir dos votos de legenda dos cargos de deputado."""
+    """{(ano, número do partido): sigla}, a partir dos votos de legenda dos cargos de deputado/vereador."""
     df = ler_tabela(arquivo_resumo())
     legenda = df[
-        df["DS_CARGO"].str.contains("deputado", case=False, na=False)
+        df["DS_CARGO"].str.contains("deputado|vereador", case=False, na=False, regex=True)
         & (df["NR_VOTAVEL"].str.len() == 2)
         & ~df["NR_VOTAVEL"].isin(["95", "96", "97", "98"])
     ].drop_duplicates(["ANO", "NR_VOTAVEL"])
@@ -826,8 +852,11 @@ else:
             base = base[base["NR_SECAO"] == secao_sel]
 
 # ------------------------------------------------- votos por candidato (nominal)
+# prefeito/vereador com "Todos os municípios": o mesmo número existe em várias cidades -> uma linha por cidade
+por_cidade = municipio == TODOS and eh_municipal(cargo)
+chaves = ["NR_VOTAVEL", "NM_VOTAVEL"] + (["NM_MUNICIPIO"] if por_cidade else [])
 resultado = texto(
-    agrupar(base, ["NR_VOTAVEL", "NM_VOTAVEL"])["QT_VOTOS"].sum()
+    agrupar(base, chaves)["QT_VOTOS"].sum()
     .sort_values("QT_VOTOS", ascending=False)
     .reset_index(drop=True)
 )
@@ -836,24 +865,48 @@ if resultado.empty:
     st.stop()
 
 total = int(resultado["QT_VOTOS"].sum())
-resultado["% dos votos nominais"] = (resultado["QT_VOTOS"] / total * 100).round(2) if total else 0
+if por_cidade:   # % dentro da própria cidade
+    base_pct = resultado.groupby("NM_MUNICIPIO")["QT_VOTOS"].transform("sum")
+else:
+    base_pct = total
+resultado["% dos votos nominais"] = (resultado["QT_VOTOS"] / base_pct * 100).fillna(0).round(2)
+
 partidos = carregar_partidos()
-cadastro = carregar_candidatos()
+cadastro = carregar_candidatos(ano)
 cargo_n = normalizar(cargo)
+if por_cidade:
+    ues = [str(indice.get(m, "")).lstrip("0") for m in resultado["NM_MUNICIPIO"]]
+elif eh_municipal(cargo):
+    ues = [str(codigo).lstrip("0")] * len(resultado)
+else:
+    ues = ["BA"] * len(resultado)
 do_cadastro = [
-    cadastro.get((ano, turno, cargo_n, n)) or cadastro.get((ano, "1", cargo_n, n)) or ("", "", "")
-    for n in resultado["NR_VOTAVEL"]
+    cadastro.get((ano, turno, cargo_n, u, n)) or cadastro.get((ano, "1", cargo_n, u, n)) or ("", "", "")
+    for u, n in zip(ues, resultado["NR_VOTAVEL"])
 ]
-fotos = {n: c[2] for n, c in zip(resultado["NR_VOTAVEL"], do_cadastro) if c[2]}
 resultado.insert(0, "Pos.", range(1, len(resultado) + 1))
+foto_sq = {pos: (u, c[2]) for pos, u, c in zip(resultado["Pos."], ues, do_cadastro) if c[2]}
+
+
+def foto_de(pos):
+    if pos not in foto_sq:
+        return None
+    ue, sq = foto_sq[pos]
+    return carregar_fotos(ano, ue).get(sq)
+
+
 resultado.insert(3, "Partido", [
     c[0] or partidos.get((ano, str(n)[:2])) or SIGLAS_POR_NUMERO.get(str(n)[:2], "")
     for n, c in zip(resultado["NR_VOTAVEL"], do_cadastro)
 ])
 resultado.insert(4, "Situação", [c[1] for c in do_cadastro])
 resultado = resultado.rename(
-    columns={"NR_VOTAVEL": "Número", "NM_VOTAVEL": "Candidato", "QT_VOTOS": "Votos"}
+    columns={"NR_VOTAVEL": "Número", "NM_VOTAVEL": "Candidato", "QT_VOTOS": "Votos", "NM_MUNICIPIO": "Município"}
 )
+if por_cidade:   # Município logo depois do nome
+    colunas = list(resultado.columns)
+    colunas.insert(colunas.index("Candidato") + 1, colunas.pop(colunas.index("Município")))
+    resultado = resultado[colunas]
 
 contexto = [(ano, False), (cargo, True), ("Bahia (BA)" if municipio == TODOS else municipio, municipio != TODOS)]
 if bairro_txt:
@@ -863,7 +916,7 @@ if escola is not None:
 if secao_sel != TODAS_SECOES:
     contexto.append((f"seção {secao_sel}", False))
 contexto.append((f"{turno}º turno", False))
-faixa_contexto(contexto)
+faixa_contexto(contexto, "Eleição Municipal" if int(ano) % 4 == 0 else "Eleição Geral")
 
 metricas = [("Total de votos nominais", formatar(total)), ("Candidatos", len(resultado))]
 if escolas_f is not None:
@@ -925,7 +978,10 @@ partido_sel = o2.selectbox("Partido", [TODOS_PARTIDOS] + lista_partidos, label_v
 
 visivel = resultado
 if texto_filtro.strip():
-    alvo = (visivel["Candidato"] + " " + visivel["Partido"] + " " + visivel["Número"] + " " + visivel["Situação"]).map(normalizar)
+    alvo = visivel["Candidato"] + " " + visivel["Partido"] + " " + visivel["Número"] + " " + visivel["Situação"]
+    if por_cidade:
+        alvo = alvo + " " + visivel["Município"]
+    alvo = alvo.map(normalizar)
     visivel = visivel[alvo.str.contains(normalizar(texto_filtro), regex=False)]
 if partido_sel != TODOS_PARTIDOS:
     visivel = visivel[visivel["Partido"] == partido_sel]
@@ -943,9 +999,12 @@ else:
         if ds is None else
         "Para ver a votação de um candidato <b>por escola</b>, clique nele na <b>tabela completa</b> abaixo."
     )
+    colunas_lista = ["Pos.", "Candidato", "Número", "Partido", "Situação", "Votos", "% dos votos nominais"]
+    if por_cidade:
+        colunas_lista.append("Município")
     lista_candidatos(
-        visivel.head(qtd)[["Pos.", "Candidato", "Número", "Partido", "Situação", "Votos"]].rename(columns={"Pos.": "Pos"}),
-        total, aviso, fotos,
+        visivel.head(qtd)[colunas_lista].rename(columns={"Pos.": "Pos", "% dos votos nominais": "Pct"}),
+        aviso, foto_de,
     )
     if len(visivel) > qtd:
         if st.button(f"Mostrar mais ({len(visivel) - qtd} restantes)", key=f"mais|{qtd_chave}"):
@@ -1040,8 +1099,11 @@ if candidato is not None:
     if not outros_anos:
         st.info("Só há dados de um ano. Rode baixar_dados.py e preparar_dados.py para incluir outro ano.")
     else:
+        # sugere a eleição mais próxima do mesmo tipo (municipal com municipal, geral com geral)
+        mesmo_tipo = [a for a in outros_anos if int(a) % 4 == int(ano) % 4] or outros_anos
+        sugerido = min(mesmo_tipo, key=lambda a: (abs(int(a) - int(ano)), int(a)))
         escolha_ano = st.radio(
-            "Comparar com o ano", [NAO_COMPARAR] + outros_anos, index=1,
+            "Comparar com o ano", [NAO_COMPARAR] + outros_anos, index=1 + outros_anos.index(sugerido),
             horizontal=True, key=f"cmp_ano|{ano}",
         )
         if escolha_ano != NAO_COMPARAR:
