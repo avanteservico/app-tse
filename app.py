@@ -1230,11 +1230,6 @@ def mostrar_candidato(candidato):
     st.subheader(f"Votação de {nome} ({numero}) por escola - {municipio}{escopo} - {ano}")
     st.metric("Votos do candidato nesta seleção", formatar(total_cand))
 
-    grafico = por_escola.head(15).copy()
-    grafico["Rótulo"] = grafico["Escola"] + " (zona " + grafico["Zona"] + ")"
-    st.markdown("**15 escolas com mais votos**")
-    st.bar_chart(grafico.set_index("Rótulo")["Votos"])
-
     st.markdown("**Todas as escolas, da maior para a menor votação** - clique em uma escola para ver "
                 "a votação por seção (urna)")
     evento = st.dataframe(
