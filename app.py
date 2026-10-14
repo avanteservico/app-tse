@@ -54,6 +54,14 @@ ESTILO = """
 html, body, [class*="st-"], .stMarkdown, button, input, textarea, select {
   font-family: 'Jost', system-ui, sans-serif;
 }
+/* ícones do Streamlit (setas do menu lateral etc.) usam uma fonte própria; sem isto aparece o nome do ícone */
+[data-testid="stIconMaterial"] { font-family: 'Material Symbols Rounded' !important; }
+/* botão de abrir o menu lateral (quando está fechado) mais visível */
+[data-testid="stExpandSidebarButton"] {
+  background: var(--cartao); border: 1px solid var(--borda); border-radius: 10px;
+  width: 38px !important; height: 38px !important; color: var(--texto);
+}
+[data-testid="stExpandSidebarButton"]:hover { background: var(--faixa); }
 h1, h2, h3 { font-family: 'Jost', system-ui, sans-serif !important; font-weight: 600 !important; color: var(--texto); }
 [data-testid="stSidebar"] { background: #ebe7de; border-right: 1px solid var(--borda); }
 
@@ -133,11 +141,29 @@ header[data-testid="stHeader"] { background: transparent; }
 .cand.sel { background: #ece5d8; border-bottom-color: transparent; }
 .cand-abrir { color: var(--azul); font-weight: 500; white-space: nowrap; }
 .lista.lista-b { margin-top: 6px; }
+
+/* trajetória do candidato: uma barra por eleição */
+.traj-linha {
+  display: grid; grid-template-columns: 150px 1fr 90px; column-gap: 14px; align-items: center;
+  padding: 8px 0; border-bottom: 1px solid var(--borda);
+}
+.traj-linha:last-child { border-bottom: 0; }
+.traj-ano b { display: block; font-size: 1.05rem; color: var(--texto); }
+.traj-ano span { display: block; font-weight: 600; font-size: .9rem; }
+.traj-ano small { display: block; color: var(--suave); font-size: .8rem; line-height: 1.3; }
+.traj-trilho { height: 22px; background: var(--trilho); border-radius: 7px; overflow: hidden; }
+.traj-trilho span { display: block; height: 100%; border-radius: 7px; min-width: 3px; }
+.traj-votos { text-align: right; }
+.traj-votos b { display: block; font-size: 1.05rem; color: var(--texto); }
+.traj-votos span { color: var(--suave); font-size: .85rem; }
+.traj-votos span.eleito { color: var(--verde); font-weight: 600; }
 @media (max-width: 640px) {
   .cand { grid-template-columns: 40px 22px 1fr auto; column-gap: 8px; }
   .cand-foto { width: 40px; height: 52px; font-size: .9rem; }
   .cand-nome { font-size: 1rem; }
   .cand-meta { margin-top: 6px; }
+  .traj-linha { grid-template-columns: 1fr auto; row-gap: 6px; }
+  .traj-trilho { grid-column: 1 / -1; grid-row: 2; height: 16px; }
   .block-container { padding: 3.2rem .9rem 2rem !important; }
   h1 { font-size: 1.7rem !important; }
   [data-testid="stMetric"] { padding: 10px 14px; }
@@ -519,6 +545,83 @@ def candidaturas_da_pessoa(ano, pessoa, ues):
     if not pessoa:
         return set()
     return {(c, n) for (_, _, c, u, n), (*_, i) in carregar_candidatos(ano).items() if i == pessoa and u in ues}
+
+
+@st.cache_data(max_entries=100)
+def trajetoria(pessoa):
+    """Cada eleição que a pessoa disputou (do cadastro do TSE), com o total de votos nominais da candidatura
+    (no estado, para os cargos estaduais/federais; no município, para prefeito/vereador)."""
+    arquivo = PASTA_APP / "candidatos.parquet"
+    if not pessoa or not arquivo.exists():
+        return pd.DataFrame()
+    cad = pd.read_parquet(arquivo, filters=[("ID_PESSOA", "==", pessoa)])
+    cad = cad.drop_duplicates(["ANO", "NR_TURNO", "DS_CARGO", "SG_UE", "NR_CANDIDATO"])
+    if cad.empty:
+        return pd.DataFrame()
+    resumo = carregar_resumo()
+    nome_do_codigo = {str(c).lstrip("0"): m for m, c in carregar_indice().items()}
+    linhas = []
+    for c in cad.itertuples(index=False):
+        votos = resumo[
+            (resumo["ANO"] == c.ANO) & (resumo["NR_TURNO"] == c.NR_TURNO) & (resumo["NR_VOTAVEL"] == c.NR_CANDIDATO)
+            & (resumo["DS_CARGO"].map(normalizar) == normalizar(c.DS_CARGO))
+        ]
+        municipio_c = ""
+        if c.SG_UE != "BA":
+            municipio_c = nome_do_codigo.get(c.SG_UE, "")
+            votos = votos[votos["NM_MUNICIPIO"] == municipio_c]
+        situacao = SITUACOES.get(normalizar(c.DS_SIT_TOT_TURNO), "")
+        if not situacao and not c.DS_SIT_TOT_TURNO.startswith("#"):
+            situacao = c.DS_SIT_TOT_TURNO.capitalize()
+        linhas.append({
+            "Ano": c.ANO, "Turno": c.NR_TURNO, "Cargo": c.DS_CARGO.title(), "Número": c.NR_CANDIDATO,
+            "Partido": c.SG_PARTIDO, "Município": municipio_c.title(), "Situação": situacao,
+            "Nome_urna": votos["NM_VOTAVEL"].iloc[0] if not votos.empty else "",
+            "Votos": int(votos["QT_VOTOS"].sum()),
+        })
+    return pd.DataFrame(linhas).sort_values(["Ano", "Turno"]).reset_index(drop=True)
+
+
+CORES_CARGO = {
+    "VEREADOR": "#a63db1", "PREFEITO": "#d9762b", "DEPUTADO ESTADUAL": "#2456a6",
+    "DEPUTADO FEDERAL": "#1e7b45", "SENADOR": "#b3364a", "GOVERNADOR": "#7a5c2e",
+}
+
+
+def mostrar_trajetoria(pessoa, nome):
+    """Barras com a votação em cada eleição, da mais antiga à mais recente, na escala da maior votação."""
+    traj = trajetoria(pessoa)
+    if traj.empty:
+        st.caption(f"Não encontrei outras eleições de {nome} no cadastro do TSE.")
+        return
+    maior = max(int(traj["Votos"].max()), 1)
+    linhas = []
+    for t in traj.itertuples(index=False):
+        cor = CORES_CARGO.get(normalizar(t.Cargo), "#6b665d")
+        cargo = html.escape(t.Cargo) + (f" · {t.Turno}º turno" if t.Turno != "1" else "")
+        detalhes = [f"nº {html.escape(t.Número)}"]
+        if t.Partido:
+            detalhes.append(html.escape(t.Partido))
+        if t.Município:
+            detalhes.append(html.escape(t.Município))
+        if t.Nome_urna and normalizar(t.Nome_urna) != normalizar(nome):   # nome de urna diferente naquele ano
+            detalhes.append(f"como {html.escape(t.Nome_urna)}")
+        situacao = html.escape(t.Situação)
+        classe = "eleito" if t.Situação == "Eleito" else ""
+        linhas.append(
+            '<div class="traj-linha">'
+            f'<div class="traj-ano"><b>{t.Ano}</b><span style="color:{cor}">{cargo}</span>'
+            f'<small>{" · ".join(detalhes)}</small></div>'
+            f'<div class="traj-trilho"><span style="width:{t.Votos / maior * 100:.2f}%;background:{cor}"></span></div>'
+            f'<div class="traj-votos"><b>{formatar(t.Votos)}</b><span class="{classe}">{situacao}</span></div>'
+            "</div>"
+        )
+    st.markdown(f'<div class="traj">{"".join(linhas)}</div>', unsafe_allow_html=True)
+    st.caption(
+        f"Todas as eleições de {nome} na Bahia desde 2016, da mais antiga à mais recente, na mesma escala "
+        "(a maior votação dele). Votos nominais no estado (deputado, senador, governador) ou no município "
+        "(prefeito, vereador). A cor indica o cargo."
+    )
 
 
 @st.cache_data(max_entries=60)
@@ -1244,6 +1347,9 @@ def mostrar_candidato(candidato):
     por_escola = por_escola.rename(columns={"NR_ZONA": "Zona"})
     colunas_escola = ["Pos.", "Escola", "Bairro/localidade", "Zona", "Endereço", "Votos",
                       "% dos votos do candidato", "Seções com votos"]
+
+    with st.expander(f"Trajetória de {nome} em todas as eleições", expanded=True):
+        mostrar_trajetoria(pessoa_do_numero.get(numero), nome)
 
     escopo = f" - {bairro_txt}" if bairro_txt else ""
     st.subheader(f"Votação de {nome} ({numero}) por escola - {municipio}{escopo} - {ano}")
