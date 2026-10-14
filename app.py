@@ -41,6 +41,89 @@ LIMITE_GRAUS = 1.2   # escola a mais de ~130 km do centro do município = coorde
 centro_mun = None    # (latitude, longitude) mediana das escolas do município escolhido
 
 st.set_page_config(page_title="Eleições - Bahia", layout="wide")
+
+# ------------------------------------------------------------- aparência
+ESTILO = """
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Jost:wght@400;500;600;700&display=swap');
+:root {
+  --fundo: #f3f1ea; --cartao: #faf9f5; --borda: #e3ded3; --texto: #2a2723; --suave: #6b665d;
+  --verde: #1e7b45; --trilho: #e7e3da; --escuro: #2a2622; --faixa: #ebe3d7; --azul: #2456a6;
+}
+html, body, [class*="st-"], .stMarkdown, button, input, textarea, select {
+  font-family: 'Jost', system-ui, sans-serif;
+}
+h1, h2, h3 { font-family: 'Jost', system-ui, sans-serif !important; font-weight: 600 !important; color: var(--texto); }
+[data-testid="stSidebar"] { background: #ebe7de; border-right: 1px solid var(--borda); }
+
+/* cartões: métricas, expansores, tabelas, gráficos */
+[data-testid="stMetric"] {
+  background: var(--cartao); border: 1px solid var(--borda); border-radius: 14px; padding: 14px 18px;
+}
+[data-testid="stMetricValue"] { font-weight: 600; }
+[data-testid="stExpander"] details {
+  background: var(--cartao); border: 1px solid var(--borda) !important; border-radius: 14px !important;
+}
+[data-testid="stDataFrame"], [data-testid="stVegaLiteChart"], [data-testid="stDeckGlJsonChart"] {
+  border: 1px solid var(--borda); border-radius: 14px; overflow: hidden; background: var(--cartao);
+}
+
+/* campos de texto e listas de escolha arredondados */
+[data-testid="stTextInput"] div[data-baseweb="input"],
+[data-testid="stSelectbox"] div[data-baseweb="select"] > div {
+  border-radius: 12px !important; background: var(--cartao) !important; border-color: var(--borda) !important;
+}
+[data-testid="stTextInput"] input { padding: 12px 14px; font-size: 1.05rem; }
+
+/* botões escuros */
+.stButton button, .stDownloadButton button, [data-testid="stFormSubmitButton"] button {
+  background: var(--escuro); color: #fff; border: 0; border-radius: 12px; font-weight: 600; padding: 8px 20px;
+}
+.stButton button:hover, .stDownloadButton button:hover, [data-testid="stFormSubmitButton"] button:hover {
+  background: #000; color: #fff;
+}
+[data-testid="stForm"] { border: 0; padding: 0; }
+
+/* faixa de contexto (eleição · ano · cargo · local) */
+.faixa {
+  background: var(--faixa); border: 1px solid var(--borda); border-left: 3px solid var(--azul);
+  border-radius: 8px; padding: 8px 14px; margin: 6px 0 14px; color: var(--texto); font-size: .95rem;
+}
+.faixa b.eleicao { color: var(--azul); }
+.faixa .sep { color: var(--suave); margin: 0 6px; }
+
+/* lista de candidatos */
+.lista { background: var(--cartao); border: 1px solid var(--borda); border-radius: 14px; padding: 6px 16px 4px; }
+.lista-topo { color: var(--suave); font-size: .92rem; padding: 10px 0 4px; }
+.lista-topo b { color: var(--texto); }
+.cand {
+  display: grid; grid-template-columns: 54px 30px 1fr auto; column-gap: 12px; row-gap: 10px;
+  padding: 12px 0 12px; border-bottom: 1px solid var(--borda); align-items: start;
+}
+.cand:last-child { border-bottom: 0; }
+.cand-foto {
+  width: 54px; height: 70px; border-radius: 6px; background: #e4ddcf; color: #6b5f4b;
+  display: flex; align-items: center; justify-content: center; font-weight: 600; font-size: 1.1rem;
+  border: 1px solid var(--borda);
+}
+.cand-pos { color: var(--suave); padding-top: 3px; text-align: center; }
+.cand-nome { font-size: 1.12rem; font-weight: 500; color: var(--texto); line-height: 1.3; }
+.cand-meta { color: #4a463f; font-size: .92rem; margin-top: 14px; }
+.cand-votos { text-align: right; white-space: nowrap; }
+.cand-votos b { display: block; font-size: 1.1rem; font-weight: 600; color: var(--texto); }
+.cand-votos span { color: var(--suave); font-size: .9rem; }
+.cand-barra { grid-column: 1 / -1; height: 3px; background: var(--trilho); border-radius: 2px; }
+.cand-barra span { display: block; height: 3px; background: var(--verde); border-radius: 2px; min-width: 2px; }
+@media (max-width: 640px) {
+  .cand { grid-template-columns: 40px 22px 1fr auto; column-gap: 8px; }
+  .cand-foto { width: 40px; height: 52px; font-size: .9rem; }
+  .cand-nome { font-size: 1rem; }
+  .cand-meta { margin-top: 6px; }
+}
+</style>
+"""
+st.markdown(ESTILO, unsafe_allow_html=True)
+
 st.title("Eleições - Bahia")
 st.caption(
     "Fonte: Portal de Dados Abertos do TSE (dadosabertos.tse.jus.br). "
@@ -69,6 +152,68 @@ def formatar(n):
     return f"{int(n):,}".replace(",", ".")
 
 
+def formatar_pct(p):
+    return f"{p:.2f}".replace(".", ",") + "%"
+
+
+# nome do partido (como vem no voto de legenda do TSE, normalizado) -> sigla
+SIGLAS = {
+    "REPUBLICANOS": "REPUBLICANOS", "PROGRESSISTAS": "PP", "PARTIDO DEMOCRATICO TRABALHISTA": "PDT",
+    "PARTIDO DOS TRABALHADORES": "PT", "PARTIDO TRABALHISTA BRASILEIRO": "PTB", "PARTIDO MISSAO": "MISSÃO",
+    "MOVIMENTO DEMOCRATICO BRASILEIRO": "MDB", "REDE SUSTENTABILIDADE": "REDE", "PODEMOS": "PODE",
+    "PARTIDO SOCIAL CRISTAO": "PSC", "PARTIDO COMUNISTA BRASILEIRO": "PCB", "PARTIDO LIBERAL": "PL",
+    "CIDADANIA": "CIDADANIA", "DEMOCRACIA CRISTA": "DC", "PARTIDO RENOVADOR TRABALHISTA BRASILEIRO": "PRTB",
+    "PARTIDO NOVO": "NOVO", "PARTIDO DA MOBILIZACAO NACIONAL": "MOBILIZA", "MOBILIZACAO NACIONAL": "MOBILIZA",
+    "PARTIDO DA MULHER BRASILEIRA": "PMB", "AGIR": "AGIR", "PARTIDO SOCIALISTA BRASILEIRO": "PSB",
+    "PARTIDO VERDE": "PV", "UNIAO BRASIL": "UNIÃO", "PARTIDO DA SOCIAL DEMOCRACIA BRASILEIRA": "PSDB",
+    "PATRIOTA": "PATRIOTA", "PARTIDO SOCIAL DEMOCRATICO": "PSD", "PARTIDO COMUNISTA DO BRASIL": "PCdoB",
+    "AVANTE": "AVANTE", "SOLIDARIEDADE": "SOLIDARIEDADE", "UNIDADE POPULAR": "UP",
+    "PARTIDO REPUBLICANO DA ORDEM SOCIAL": "PROS", "PARTIDO SOCIALISMO E LIBERDADE": "PSOL",
+    "PARTIDO RENOVACAO DEMOCRATICA": "PRD", "PARTIDO SOCIALISTA DOS TRABALHADORES UNIFICADO": "PSTU",
+    "PARTIDO DA CAUSA OPERARIA": "PCO",
+}
+# partidos que às vezes não têm candidato a deputado (então não aparecem nos votos de legenda)
+SIGLAS_POR_NUMERO = {"16": "PSTU", "21": "PCB", "29": "PCO"}
+
+
+def iniciais(nome):
+    partes = [p for p in str(nome).split() if p[:1].isalpha()]
+    if not partes:
+        return "?"
+    return (partes[0][0] + (partes[-1][0] if len(partes) > 1 else "")).upper()
+
+
+def faixa_contexto(itens):
+    """Faixa com borda azul: 'Eleição Geral · 2026 · Deputado Federal · Bahia (BA)'."""
+    sep = '<span class="sep">·</span>'
+    partes = ['<b class="eleicao">Eleição Geral</b>']
+    for texto, destaque in itens:
+        texto = html.escape(str(texto))
+        partes.append(f"<b>{texto}</b>" if destaque else texto)
+    st.markdown(f'<div class="faixa">{sep.join(partes)}</div>', unsafe_allow_html=True)
+
+
+def lista_candidatos(tabela, total, aviso):
+    """Lista no estilo 'ranking': iniciais, posição, nome, partido · nº, votos, % e barra verde."""
+    linhas = []
+    for c in tabela.itertuples(index=False):
+        pct = c.Votos / total * 100 if total else 0
+        meta = f"{html.escape(c.Partido)} · nº {html.escape(c.Número)}" if c.Partido else f"nº {html.escape(c.Número)}"
+        linhas.append(
+            '<div class="cand">'
+            f'<div class="cand-foto">{html.escape(iniciais(c.Candidato))}</div>'
+            f'<div class="cand-pos">{c.Pos}</div>'
+            f'<div><div class="cand-nome">{html.escape(c.Candidato)}</div><div class="cand-meta">{meta}</div></div>'
+            f'<div class="cand-votos"><b>{formatar(c.Votos)}</b><span>{formatar_pct(pct)}</span></div>'
+            f'<div class="cand-barra"><span style="width:{min(pct, 100):.2f}%"></span></div>'
+            "</div>"
+        )
+    st.markdown(
+        f'<div class="lista"><div class="lista-topo">{aviso}</div>{"".join(linhas)}</div>',
+        unsafe_allow_html=True,
+    )
+
+
 def arquivo_resumo():
     compactado = PASTA_APP / "votos_por_municipio.parquet"
     return compactado if compactado.exists() else PASTA / "votos_por_municipio.csv"
@@ -91,6 +236,21 @@ def carregar_resumo():
     df = ler_tabela(arquivo_resumo())
     df["QT_VOTOS"] = pd.to_numeric(df["QT_VOTOS"], errors="coerce").fillna(0).astype(int)
     return so_nominais(df)
+
+
+@st.cache_data
+def carregar_partidos():
+    """{(ano, número do partido): sigla}, a partir dos votos de legenda dos cargos de deputado."""
+    df = ler_tabela(arquivo_resumo())
+    legenda = df[
+        df["DS_CARGO"].str.contains("deputado", case=False, na=False)
+        & (df["NR_VOTAVEL"].str.len() == 2)
+        & ~df["NR_VOTAVEL"].isin(["95", "96", "97", "98"])
+    ].drop_duplicates(["ANO", "NR_VOTAVEL"])
+    return {
+        (a, n): SIGLAS.get(normalizar(nome), str(nome).upper())
+        for a, n, nome in zip(legenda["ANO"], legenda["NR_VOTAVEL"], legenda["NM_VOTAVEL"])
+    }
 
 
 @st.cache_data
@@ -608,18 +768,24 @@ if resultado.empty:
 
 total = int(resultado["QT_VOTOS"].sum())
 resultado["% dos votos nominais"] = (resultado["QT_VOTOS"] / total * 100).round(2) if total else 0
+partidos = carregar_partidos()
+resultado.insert(0, "Pos.", range(1, len(resultado) + 1))
+resultado.insert(3, "Partido", [
+    partidos.get((ano, str(n)[:2])) or SIGLAS_POR_NUMERO.get(str(n)[:2], "") for n in resultado["NR_VOTAVEL"]
+])
 resultado = resultado.rename(
     columns={"NR_VOTAVEL": "Número", "NM_VOTAVEL": "Candidato", "QT_VOTOS": "Votos"}
 )
 
-titulo = f"{cargo} - {municipio}"
+contexto = [(ano, False), (cargo, True), ("Bahia (BA)" if municipio == TODOS else municipio, municipio != TODOS)]
 if bairro_txt:
-    titulo += f" - {bairro_txt}"
+    contexto.append((bairro_txt, False))
 if escola is not None:
-    titulo += f" - {escola['NM_LOCAL_VOTACAO']}"
+    contexto.append((escola["NM_LOCAL_VOTACAO"], False))
 if secao_sel != TODAS_SECOES:
-    titulo += f" - seção {secao_sel}"
-st.subheader(f"{ano} | {titulo} | {turno}º turno")
+    contexto.append((f"seção {secao_sel}", False))
+contexto.append((f"{turno}º turno", False))
+faixa_contexto(contexto)
 
 metricas = [("Total de votos nominais", formatar(total)), ("Candidatos", len(resultado))]
 if escolas_f is not None:
@@ -663,32 +829,73 @@ if ds is not None:
         ))
 
 # ------------------------------------------------------ ranking de candidatos
-st.markdown("**Top 10**")
-st.bar_chart(resultado.head(10).set_index("Candidato")["Votos"])
+chave = f"tabela|{ano}|{turno}|{cargo}|{municipio}|{bairro_txt}|{escola_sel}|{secao_sel}"
+MAIS_VOTADOS, ALFABETICA, TODOS_PARTIDOS = "Mais votados", "A–Z", "Todos os partidos"
+
+with st.form("filtro_candidatos", border=False):
+    f1, f2 = st.columns([8, 1], vertical_alignment="bottom")
+    texto_filtro = f1.text_input(
+        "Filtrar por nome ou partido", placeholder="Filtrar por nome ou partido", label_visibility="collapsed",
+    )
+    f2.form_submit_button("Filtrar", use_container_width=True)
+o1, o2, _ = st.columns([2, 2, 6], vertical_alignment="center")
+ordem_lista = o1.segmented_control(
+    "Ordem", [MAIS_VOTADOS, ALFABETICA], default=MAIS_VOTADOS, label_visibility="collapsed",
+) or MAIS_VOTADOS
+lista_partidos = sorted(p for p in resultado["Partido"].unique() if p)
+partido_sel = o2.selectbox("Partido", [TODOS_PARTIDOS] + lista_partidos, label_visibility="collapsed")
+
+visivel = resultado
+if texto_filtro.strip():
+    alvo = (visivel["Candidato"] + " " + visivel["Partido"] + " " + visivel["Número"]).map(normalizar)
+    visivel = visivel[alvo.str.contains(normalizar(texto_filtro), regex=False)]
+if partido_sel != TODOS_PARTIDOS:
+    visivel = visivel[visivel["Partido"] == partido_sel]
+if ordem_lista == ALFABETICA:
+    visivel = visivel.sort_values("Candidato", key=lambda s: s.map(normalizar))
+visivel = visivel.reset_index(drop=True)
+
+if visivel.empty:
+    st.info("Nenhum candidato encontrado com esse filtro.")
+else:
+    qtd_chave = f"qtd|{chave}|{texto_filtro}|{partido_sel}|{ordem_lista}"
+    qtd = st.session_state.get(qtd_chave, 10)
+    aviso = (
+        "Escolha um <b>município</b> na barra lateral para ver a votação de cada candidato <b>por escola</b>."
+        if ds is None else
+        "Para ver a votação de um candidato <b>por escola</b>, clique nele na <b>tabela completa</b> abaixo."
+    )
+    lista_candidatos(
+        visivel.head(qtd)[["Pos.", "Candidato", "Número", "Partido", "Votos"]].rename(columns={"Pos.": "Pos"}),
+        total, aviso,
+    )
+    if len(visivel) > qtd:
+        if st.button(f"Mostrar mais ({len(visivel) - qtd} restantes)", key=f"mais|{qtd_chave}"):
+            st.session_state[qtd_chave] = qtd + 20
+            st.rerun()
 
 candidato = None
 if ds is None:
     st.markdown("**Tabela completa**")
-    st.dataframe(resultado, hide_index=True)
-    st.info("Escolha um município na barra lateral para ver bairros, escolas, seções e a votação de cada candidato por escola.")
-else:
+    st.dataframe(visivel, hide_index=True)
+elif not visivel.empty:
     st.markdown("**Tabela completa** - clique em um candidato para ver a votação dele por escola")
-    chave = f"tabela|{ano}|{turno}|{cargo}|{municipio}|{bairro_txt}|{escola_sel}|{secao_sel}"
+    chave_tabela = f"{chave}|{texto_filtro}|{partido_sel}|{ordem_lista}"
     try:
         evento = st.dataframe(
-            resultado, hide_index=True,
-            on_select="rerun", selection_mode="single-row", key=chave,
+            visivel, hide_index=True,
+            on_select="rerun", selection_mode="single-row", key=chave_tabela,
         )
         linhas = evento.selection.rows
         if linhas:
-            candidato = resultado.iloc[linhas[0]]
+            candidato = visivel.iloc[linhas[0]]
     except TypeError:
         # Streamlit antigo, sem clique na tabela: usa uma lista de escolha
-        st.dataframe(resultado, hide_index=True)
-        opcoes = ["(nenhum)"] + (resultado["Número"] + " - " + resultado["Candidato"]).tolist()
-        escolhido = st.selectbox("Candidato", opcoes, key=f"cand|{chave}")
+        st.dataframe(visivel, hide_index=True)
+        opcoes = ["(nenhum)"] + (visivel["Número"] + " - " + visivel["Candidato"]).tolist()
+        escolhido = st.selectbox("Candidato", opcoes, key=f"cand|{chave_tabela}")
         if escolhido != "(nenhum)":
-            candidato = resultado.iloc[opcoes.index(escolhido) - 1]
+            candidato = visivel.iloc[opcoes.index(escolhido) - 1]
 
 # ------------------------------------------ votação do candidato por escola
 if candidato is not None:
