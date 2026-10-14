@@ -158,6 +158,11 @@ header[data-testid="stHeader"] { background: transparent; }
 .cand.sel { background: #ece5d8; border-bottom-color: transparent; }
 .cand-abrir { color: var(--azul); font-weight: 500; white-space: nowrap; }
 .lista.lista-b { margin-top: 6px; }
+.partido-total {
+  display: inline-block; padding: 7px 14px; border-radius: 10px; background: var(--faixa);
+  border: 1px solid var(--borda); border-left: 3px solid var(--verde); color: var(--texto); font-size: .95rem;
+}
+.partido-total .sep { color: var(--suave); margin: 0 6px; }
 
 /* trajetória do candidato: uma barra por eleição */
 .traj-linha {
@@ -1715,12 +1720,26 @@ chave = f"tabela|{ano}|{turno}|{cargo}|{municipio}|{bairro_txt}|{escola_sel}|{se
 MAIS_VOTADOS, ALFABETICA, TODOS_PARTIDOS = "Mais votados", "A–Z", "Todos os partidos"
 
 area_busca = st.container()   # o campo de busca fica acima, mas as sugestões dependem do partido escolhido
-o1, o2, _ = st.columns([2, 2, 6], vertical_alignment="center")
+o1, o2, o3 = st.columns([2, 3, 5], vertical_alignment="center")
 ordem_lista = o1.segmented_control(
     "Ordem", [MAIS_VOTADOS, ALFABETICA], default=MAIS_VOTADOS, label_visibility="collapsed",
 ) or MAIS_VOTADOS
 lista_partidos = sorted(p for p in resultado["Partido"].unique() if p)
-partido_sel = o2.selectbox("Partido", [TODOS_PARTIDOS] + lista_partidos, label_visibility="collapsed")
+votos_partido = resultado.groupby("Partido")["Votos"].sum()
+cands_partido = resultado.groupby("Partido").size()
+partido_sel = o2.selectbox(
+    "Partido", [TODOS_PARTIDOS] + lista_partidos, label_visibility="collapsed",
+    format_func=lambda p: p if p == TODOS_PARTIDOS else f"{p} · {formatar(votos_partido[p])} votos",
+)
+if partido_sel != TODOS_PARTIDOS:
+    # total dos votos nominais dos candidatos do partido (sem os votos de legenda)
+    o3.markdown(
+        f'<div class="partido-total"><b>{html.escape(partido_sel)}</b>'
+        f'<span class="sep">·</span><b>{formatar(votos_partido[partido_sel])}</b> votos nominais'
+        f'<span class="sep">·</span>{cands_partido[partido_sel]} candidato(s)'
+        f'<span class="sep">·</span>{formatar_pct(votos_partido[partido_sel] / total * 100 if total else 0)} do total</div>',
+        unsafe_allow_html=True,
+    )
 
 do_partido = resultado if partido_sel == TODOS_PARTIDOS else resultado[resultado["Partido"] == partido_sel]
 alvo_busca = do_partido["Candidato"] + " " + do_partido["Partido"] + " " + do_partido["Número"] + " " + do_partido["Situação"]
