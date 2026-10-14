@@ -174,6 +174,33 @@ header[data-testid="stHeader"] { background: transparent; }
 .traj-votos b { display: block; font-size: 1.05rem; color: var(--texto); }
 .traj-votos span { color: var(--suave); font-size: .85rem; }
 .traj-votos span.eleito { color: var(--verde); font-weight: 600; }
+
+/* comparativo entre candidatos */
+.cmp-chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 4px 0 12px; }
+.cmp-chip {
+  display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 999px;
+  background: var(--cartao); border: 1px solid var(--borda); font-size: .9rem; color: var(--texto);
+}
+.cmp-chip b { font-weight: 600; }
+.cmp-chip i, .cmp-tab th i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; flex: none; }
+.cmp-tab {
+  max-height: 560px; overflow: auto; background: var(--cartao); border: 1px solid var(--borda); border-radius: 14px;
+}
+.cmp-tab table { width: 100%; border-collapse: collapse; font-size: .92rem; }
+.cmp-tab th, .cmp-tab td { padding: 9px 14px; border-bottom: 1px solid var(--borda); text-align: right; }
+.cmp-tab th:first-child, .cmp-tab td:first-child { text-align: left; }
+.cmp-tab thead th {
+  position: sticky; top: 0; z-index: 1; background: #f4f1ea; vertical-align: bottom;
+  font-size: .78rem; text-transform: uppercase; letter-spacing: .02em; color: var(--suave);
+}
+.cmp-tab thead th span { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; color: var(--texto); }
+.cmp-tab small { display: block; color: var(--suave); font-size: .78rem; text-transform: none; letter-spacing: 0; font-weight: 400; }
+.cmp-tab td.maior { font-weight: 700; }
+.st-key-cmp_escolha [data-testid="stMultiSelectTagsContainer"] > span > span:nth-of-type(1) { background: #16a085 !important; }
+.st-key-cmp_escolha [data-testid="stMultiSelectTagsContainer"] > span > span:nth-of-type(2) { background: #2471a3 !important; }
+.st-key-cmp_escolha [data-testid="stMultiSelectTagsContainer"] > span > span:nth-of-type(3) { background: #d68910 !important; }
+.st-key-cmp_escolha [data-testid="stMultiSelectTagsContainer"] > span > span:nth-of-type(4) { background: #7d3c98 !important; }
+.cmp-tab tfoot td { position: sticky; bottom: 0; background: #f4f1ea; font-weight: 600; border-bottom: 0; }
 @media (max-width: 640px) {
   .cand { grid-template-columns: 40px 22px 1fr auto; column-gap: 8px; }
   .cand-foto { width: 40px; height: 52px; font-size: .9rem; }
@@ -1332,6 +1359,142 @@ def mostrar_secoes(nome, numero, escola_c):
     st.dataframe(por_secao, hide_index=True)
 
 
+CORES_COMPARATIVO = ["#c0392b", "#16a085", "#2471a3", "#d68910", "#7d3c98"]
+MAX_COMPARAR = 4
+POR_BAIRRO, POR_ESCOLA = "Por bairro", "Por escola"
+ABSOLUTO, PCT_CANDIDATO, PCT_LOCAL = "Absoluto", "% dos votos dele", "% do local"
+
+
+def mostrar_comparativo(numero, nome):
+    """Compara a votação nominal do candidato com até MAX_COMPARAR outros, por bairro ou por escola."""
+    st.divider()
+    st.subheader(f"Comparar {nome} com outros candidatos")
+    universo = filtrar_bairro(ds_ano[ds_ano["NR_TURNO"] == turno])
+    cands = texto(
+        agrupar(universo, ["DS_CARGO", "NR_VOTAVEL", "NM_VOTAVEL"])["QT_VOTOS"].sum()
+    )
+    cands["_mesmo_cargo"] = cands["DS_CARGO"] == cargo
+    cands = cands.sort_values(["_mesmo_cargo", "DS_CARGO", "QT_VOTOS"], ascending=[False, True, False])
+    cands = cands[~((cands["DS_CARGO"] == cargo) & (cands["NR_VOTAVEL"] == numero))]
+    rotulo = cands["NM_VOTAVEL"] + " · " + cands["DS_CARGO"] + " nº " + cands["NR_VOTAVEL"]
+    chaves = dict(zip(rotulo, zip(cands["DS_CARGO"], cands["NR_VOTAVEL"], cands["NM_VOTAVEL"])))
+    with st.container(key="cmp_escolha"):   # a chave dá a classe CSS que pinta cada etiqueta com a cor dele
+        escolhidos = st.multiselect(
+            f"Candidatos para comparar (até {MAX_COMPARAR})", list(chaves), max_selections=MAX_COMPARAR,
+            placeholder="Buscar candidato pelo nome...", key=f"comparar|{chave}|{numero}",
+        )
+    if not escolhidos:
+        st.caption(f"Escolha até {MAX_COMPARAR} candidatos de {ano} ({turno}º turno) neste município "
+                   "para comparar com a votação de " + nome + ".")
+        return
+
+    comparados = [(cargo, numero, nome)] + [chaves[r] for r in escolhidos]
+    c1, c2, c3 = st.columns([2, 3, 2], vertical_alignment="center")
+    unidade = c1.segmented_control("Agrupar", [POR_BAIRRO, POR_ESCOLA], default=POR_BAIRRO,
+                                   label_visibility="collapsed", key=f"cmp_unid|{numero}") or POR_BAIRRO
+    medida = c2.segmented_control("Medida", [ABSOLUTO, PCT_CANDIDATO, PCT_LOCAL], default=ABSOLUTO,
+                                  label_visibility="collapsed", key=f"cmp_medida|{numero}") or ABSOLUTO
+    if unidade == POR_BAIRRO and not (universo["BAIRRO"] != SEM_BAIRRO).any():
+        st.info("Este município não tem bairro/localidade nos dados; mostrando por escola.")
+        unidade = POR_ESCOLA
+
+    if unidade == POR_BAIRRO:
+        grupo = ["BAIRRO"]
+        nomes_local = None
+    else:
+        grupo = ["NR_ZONA", "NR_LOCAL_VOTACAO"]
+        nomes_local = texto(agrupar(universo, grupo).agg(
+            NM_LOCAL_VOTACAO=("NM_LOCAL_VOTACAO", "first"), BAIRRO=("BAIRRO", "first"),
+        ))
+    # total nominal de cada cargo em cada bairro/escola (base do "% do local")
+    do_local = texto(agrupar(universo, grupo + ["DS_CARGO"])["QT_VOTOS"].sum())
+    base_local = {
+        (tuple(linha[:-2]), linha[-2]): linha[-1]
+        for linha in do_local[grupo + ["DS_CARGO", "QT_VOTOS"]].itertuples(index=False, name=None)
+    }
+
+    tabela = None
+    colunas = []
+    for i, (cargo_c, num_c, nome_c) in enumerate(comparados):
+        votos = texto(agrupar(
+            universo[(universo["DS_CARGO"] == cargo_c) & (universo["NR_VOTAVEL"] == num_c)], grupo
+        )["QT_VOTOS"].sum())
+        col = f"c{i}"
+        votos = votos.rename(columns={"QT_VOTOS": col})
+        tabela = votos if tabela is None else tabela.merge(votos, on=grupo, how="outer")
+        colunas.append((col, cargo_c, num_c, nome_c, CORES_COMPARATIVO[i]))
+    for col, *_ in colunas:
+        tabela[col] = tabela[col].fillna(0).astype(int)
+    tabela = tabela.sort_values([c for c, *_ in colunas], ascending=False).reset_index(drop=True)
+    if nomes_local is not None:
+        tabela = tabela.merge(nomes_local, on=grupo, how="left")
+    totais = {col: int(tabela[col].sum()) for col, *_ in colunas}
+
+    def valor(linha, col, cargo_c):
+        v = linha[col]
+        if medida == PCT_CANDIDATO:
+            return v / totais[col] * 100 if totais[col] else 0.0
+        if medida == PCT_LOCAL:
+            base = base_local.get((tuple(linha[g] for g in grupo), cargo_c), 0)
+            return v / base * 100 if base else 0.0
+        return v
+
+    mostrar = lambda v: formatar(v) if medida == ABSOLUTO else formatar_pct(v)
+
+    # etiquetas coloridas com o total de cada um
+    etiquetas = "".join(
+        f'<span class="cmp-chip"><i style="background:{cor}"></i>{html.escape(n)} · {html.escape(cg)} '
+        f'<b>{formatar(totais[col])}</b></span>'
+        for col, cg, _, n, cor in colunas
+    )
+    st.markdown(f'<div class="cmp-chips">{etiquetas}</div>', unsafe_allow_html=True)
+
+    # tabela no estilo do anexo: cabeçalho com a cor de cada candidato, maior valor da linha em negrito
+    titulo_local = "Bairro" if unidade == POR_BAIRRO else "Escola"
+    cab = "".join(
+        f'<th><span><i style="background:{cor}"></i>{html.escape(n)}</span><small>{html.escape(cg)} nº {html.escape(nm)}</small></th>'
+        for _, cg, nm, n, cor in colunas
+    )
+    linhas_html, linhas_csv = [], []
+    for _, linha in tabela.iterrows():
+        valores = [valor(linha, col, cg) for col, cg, *_ in colunas]
+        maior = max(valores)
+        if unidade == POR_BAIRRO:
+            local = html.escape(linha["BAIRRO"])
+            local_csv = {"Bairro": linha["BAIRRO"]}
+        else:
+            local = (f'{html.escape(linha["NM_LOCAL_VOTACAO"])}<small>zona {html.escape(linha["NR_ZONA"])}'
+                     + (f' · {html.escape(linha["BAIRRO"])}' if linha["BAIRRO"] != SEM_BAIRRO else "") + "</small>")
+            local_csv = {"Escola": linha["NM_LOCAL_VOTACAO"], "Zona": linha["NR_ZONA"], "Bairro": linha["BAIRRO"]}
+        celulas = "".join(
+            f'<td class="{"maior" if v == maior and maior > 0 else ""}">{mostrar(v)}</td>' for v in valores
+        )
+        linhas_html.append(f"<tr><td>{local}</td>{celulas}</tr>")
+        linhas_csv.append({**local_csv, **{f"{n} ({cg} {nm})": round(v, 2) for (_, cg, nm, n, _), v in zip(colunas, valores)}})
+    rodape = "".join(
+        f"<td>{formatar(totais[col]) if medida == ABSOLUTO else ('100,00%' if medida == PCT_CANDIDATO else '')}</td>"
+        for col, *_ in colunas
+    )
+    st.markdown(
+        f'<div class="cmp-tab"><table><thead><tr><th>{titulo_local}</th>{cab}</tr></thead>'
+        f'<tbody>{"".join(linhas_html)}</tbody><tfoot><tr><td>Total</td>{rodape}</tr></tfoot></table></div>',
+        unsafe_allow_html=True,
+    )
+    explicacao = {
+        ABSOLUTO: "Votos nominais de cada candidato.",
+        PCT_CANDIDATO: "Quanto daquele lugar representa da votação total de cada candidato.",
+        PCT_LOCAL: "Fatia de cada candidato nos votos nominais do cargo dele naquele lugar.",
+    }[medida]
+    st.caption(f"{len(tabela)} {titulo_local.lower()}(s) onde algum deles teve votos. {explicacao} "
+               "Em negrito, o maior valor de cada linha.")
+    st.download_button(
+        "Baixar comparativo (CSV)",
+        pd.DataFrame(linhas_csv).to_csv(index=False).encode("utf-8-sig"),
+        file_name=f"comparativo_{ano}_{numero}_{'bairro' if unidade == POR_BAIRRO else 'escola'}.csv",
+        mime="text/csv", key=f"cmp_csv|{numero}",
+    )
+
+
 def mostrar_candidato(candidato):
     """Votação do candidato por escola (e, clicando na escola, por seção), mapa e comparação entre anos."""
     numero = candidato["Número"]
@@ -1393,6 +1556,8 @@ def mostrar_candidato(candidato):
     ))
 
     # ---------------------------------------------- comparação entre anos
+    mostrar_comparativo(numero, nome)
+
     outros_anos = [a for a in anos if a != ano]
     st.divider()
     st.subheader(f"Comparar {nome} entre anos")
