@@ -122,6 +122,11 @@ h1, h2, h3 { font-family: 'Jost', system-ui, sans-serif !important; font-weight:
 .cand-votos span { color: var(--suave); font-size: .9rem; }
 .cand-barra { grid-column: 1 / -1; height: 3px; background: var(--trilho); border-radius: 2px; }
 .cand-barra span { display: block; height: 3px; background: var(--verde); border-radius: 2px; min-width: 2px; }
+.cand.clicavel { cursor: pointer; margin: 0 -16px; padding-left: 16px; padding-right: 16px; }
+.cand.clicavel:hover, .cand.clicavel:focus-visible { background: #f1ede4; outline: none; }
+.cand.sel { background: #ece5d8; border-bottom-color: transparent; }
+.cand-abrir { color: var(--azul); font-weight: 500; white-space: nowrap; }
+.lista.lista-b { margin-top: 6px; }
 @media (max-width: 640px) {
   .cand { grid-template-columns: 40px 22px 1fr auto; column-gap: 8px; }
   .cand-foto { width: 40px; height: 52px; font-size: .9rem; }
@@ -233,8 +238,172 @@ def faixa_contexto(itens, tipo):
 SELOS = {"Eleito": "", "2º turno": "turno2", "Suplente": "suplente"}
 
 
-def lista_candidatos(tabela, aviso, foto_de):
-    """Lista no estilo 'ranking': foto, posição, nome, situação, partido · nº, votos, % e barra verde."""
+MINIMO_BUSCA = 3   # o filtro de candidatos começa a valer a partir de 3 letras
+
+# lista de candidatos clicável: cada cartão avisa o Python qual número foi clicado
+_LISTA_JS = """
+export default function(component) {
+  const { data, parentElement, setTriggerValue } = component;
+  let caixa = parentElement.querySelector('.lista-comp');
+  if (!caixa) {
+    caixa = document.createElement('div');
+    caixa.className = 'lista-comp';
+    parentElement.appendChild(caixa);
+    const abrir = (alvo) => {
+      const cartao = alvo.closest('.cand[data-num]');
+      if (cartao) caixa.enviar(cartao.dataset.num);
+    };
+    caixa.addEventListener('click', (e) => abrir(e.target));
+    caixa.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); abrir(e.target); }
+    });
+  }
+  // o horário vai junto para dois cliques seguidos no mesmo cartão contarem como dois cliques
+  caixa.enviar = (num) => setTriggerValue('clique', num + '|' + Date.now());
+  caixa.innerHTML = data.html;
+}
+"""
+_LISTA = st.components.v2.component("lista_candidatos", js=_LISTA_JS, isolate_styles=False)
+
+# campo de busca com autocomplete: filtra enquanto digita (a partir de MINIMO_BUSCA letras) e sugere nomes
+_BUSCA_CSS = """
+.ac { position: relative; font-family: inherit; }
+.ac-campo {
+  width: 100%; box-sizing: border-box; padding: 12px 14px; font: inherit; font-size: 1.05rem;
+  color: var(--texto, #2a2723); background: var(--cartao, #faf9f5);
+  border: 1px solid var(--borda, #e3ded3); border-radius: 12px; outline: none;
+}
+.ac-campo:focus { border-color: var(--azul, #2456a6); }
+.ac-lista {
+  position: absolute; z-index: 1000; left: 0; right: 0; top: calc(100% + 4px); margin: 0; padding: 4px;
+  list-style: none; background: #fff; border: 1px solid var(--borda, #e3ded3); border-radius: 12px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, .12); max-height: 340px; overflow-y: auto;
+}
+.ac-lista li {
+  display: flex; justify-content: space-between; gap: 12px; padding: 8px 10px; border-radius: 8px;
+  cursor: pointer; color: var(--texto, #2a2723);
+}
+.ac-lista li small { color: var(--suave, #6b665d); white-space: nowrap; }
+.ac-lista li.ativo, .ac-lista li:hover { background: var(--faixa, #ebe3d7); }
+.ac-dica { color: var(--suave, #6b665d); font-size: .82rem; margin: 4px 2px 0; min-height: 1em; }
+"""
+_BUSCA_JS = """
+export default function(component) {
+  const { data, parentElement, setStateValue } = component;
+  let raiz = parentElement.querySelector('.ac');
+  if (!raiz) {
+    raiz = document.createElement('div');
+    raiz.className = 'ac';
+    raiz.innerHTML = '<input class="ac-campo" type="search" autocomplete="off" spellcheck="false" '
+      + 'role="combobox" aria-autocomplete="list" aria-expanded="false">'
+      + '<ul class="ac-lista" role="listbox" hidden></ul><div class="ac-dica"></div>';
+    parentElement.appendChild(raiz);
+    const campo = raiz.querySelector('.ac-campo');
+    const lista = raiz.querySelector('.ac-lista');
+    campo.value = data.valor || '';
+    raiz.enviado = data.valor || '';
+    raiz.ativo = -1;
+
+    raiz.fechar = () => { lista.hidden = true; campo.setAttribute('aria-expanded', 'false'); raiz.ativo = -1; };
+    raiz.enviar = () => {
+      clearTimeout(raiz.espera);
+      const t = campo.value.trim();
+      const valor = t.length >= raiz.dados.minimo ? t : '';
+      if (valor !== raiz.enviado) {
+        raiz.enviado = valor;
+        raiz.api.setStateValue('texto', valor);
+      }
+    };
+    raiz.marcar = (i) => {
+      const itens = lista.querySelectorAll('li');
+      itens.forEach((li, j) => li.classList.toggle('ativo', j === i));
+      raiz.ativo = i;
+      if (itens[i]) itens[i].scrollIntoView({ block: 'nearest' });
+    };
+    raiz.escolher = (valor) => { campo.value = valor; raiz.fechar(); raiz.enviar(); };
+
+    campo.addEventListener('input', () => {
+      const t = campo.value.trim();
+      raiz.dica();
+      if (t.length < raiz.dados.minimo) raiz.fechar();
+      clearTimeout(raiz.espera);
+      raiz.espera = setTimeout(raiz.enviar, 300);
+    });
+    campo.addEventListener('keydown', (e) => {
+      const n = lista.querySelectorAll('li').length;
+      if (e.key === 'ArrowDown' && !lista.hidden && n) { e.preventDefault(); raiz.marcar((raiz.ativo + 1) % n); }
+      else if (e.key === 'ArrowUp' && !lista.hidden && n) { e.preventDefault(); raiz.marcar((raiz.ativo - 1 + n) % n); }
+      else if (e.key === 'Enter') {
+        e.preventDefault();
+        const li = lista.querySelectorAll('li')[raiz.ativo];
+        if (!lista.hidden && li) raiz.escolher(li.dataset.valor); else { raiz.fechar(); raiz.enviar(); }
+      }
+      else if (e.key === 'Escape') raiz.fechar();
+    });
+    campo.addEventListener('blur', () => setTimeout(raiz.fechar, 150));
+    lista.addEventListener('mousedown', (e) => {
+      const li = e.target.closest('li');
+      if (li) { e.preventDefault(); raiz.escolher(li.dataset.valor); }
+    });
+    raiz.dica = () => {
+      const falta = raiz.dados.minimo - campo.value.trim().length;
+      raiz.querySelector('.ac-dica').textContent =
+        campo.value.trim() && falta > 0 ? `Digite mais ${falta} letra(s) para filtrar` : '';
+    };
+  }
+  raiz.api = { setStateValue };
+  raiz.dados = data;
+  const campo = raiz.querySelector('.ac-campo');
+  const lista = raiz.querySelector('.ac-lista');
+  campo.placeholder = data.placeholder || '';
+  raiz.dica();
+
+  // sugestões que o Python mandou para o texto enviado (só mostra se o campo ainda tem esse texto)
+  lista.innerHTML = '';
+  const atual = campo.value.trim();
+  const sugestoes = (data.consulta === atual) ? (data.sugestoes || []) : [];
+  sugestoes.forEach((s) => {
+    const li = document.createElement('li');
+    li.setAttribute('role', 'option');
+    li.dataset.valor = s.valor;
+    const nome = document.createElement('span');
+    nome.textContent = s.valor;
+    const extra = document.createElement('small');
+    extra.textContent = s.extra || '';
+    li.append(nome, extra);
+    lista.appendChild(li);
+  });
+  const soElaMesma = sugestoes.length === 1 && sugestoes[0].valor === atual;
+  const focado = (parentElement.activeElement || document.activeElement) === campo;
+  if (sugestoes.length && !soElaMesma && focado) {
+    lista.hidden = false;
+    campo.setAttribute('aria-expanded', 'true');
+    raiz.ativo = -1;
+  } else {
+    raiz.fechar();
+  }
+}
+"""
+_BUSCA = st.components.v2.component("busca_candidato", css=_BUSCA_CSS, js=_BUSCA_JS)
+
+
+def campo_busca(chave, sugestoes_de, placeholder):
+    """Campo de busca com autocomplete. Devolve o texto do filtro ('' se tiver menos de MINIMO_BUSCA letras).
+    sugestoes_de(texto) -> [{"valor": ..., "extra": ...}] é chamada com o texto atual, antes de montar o campo."""
+    try:
+        atual = (st.session_state.get(chave) or {}).get("texto") or ""
+    except Exception:
+        atual = ""
+    resultado = _BUSCA(
+        key=chave, default={"texto": ""}, on_texto_change=lambda: None,
+        data={"valor": atual, "consulta": atual, "sugestoes": sugestoes_de(atual) if atual else [],
+              "placeholder": placeholder, "minimo": MINIMO_BUSCA},
+    )
+    return (resultado.texto or "") if resultado is not None else atual
+
+
+def cartoes_candidatos(tabela, foto_de, selecionado=None, clicavel=False):
+    """Um cartão (HTML) por candidato: foto, posição, nome, situação, partido · nº, votos, % e barra verde."""
     linhas = []
     for c in tabela.itertuples(index=False):
         pct = c.Pct
@@ -248,19 +417,41 @@ def lista_candidatos(tabela, aviso, foto_de):
         foto = foto_de(c.Pos)
         foto = (f'<img src="data:image/jpeg;base64,{foto}" alt="" loading="lazy">' if foto
                 else html.escape(iniciais(c.Candidato)))
+        if clicavel:
+            aberto = c.Número == selecionado
+            meta += f' · <span class="cand-abrir">{"▾ fechar" if aberto else "▸ ver por escola"}</span>'
+            abre = (f'<div class="cand clicavel{" sel" if aberto else ""}" data-num="{html.escape(c.Número)}" '
+                    f'role="button" tabindex="0" aria-expanded="{str(aberto).lower()}">')
+        else:
+            abre = '<div class="cand">'
         linhas.append(
-            '<div class="cand">'
-            f'<div class="cand-foto">{foto}</div>'
+            abre
+            + f'<div class="cand-foto">{foto}</div>'
             f'<div class="cand-pos">{c.Pos}</div>'
             f'<div><div class="cand-nome">{html.escape(c.Candidato)}</div><div class="cand-meta">{meta}</div></div>'
             f'<div class="cand-votos"><b>{formatar(c.Votos)}</b><span>{formatar_pct(pct)}</span></div>'
             f'<div class="cand-barra"><span style="width:{min(pct, 100):.2f}%"></span></div>'
             "</div>"
         )
-    st.markdown(
-        f'<div class="lista"><div class="lista-topo">{aviso}</div>{"".join(linhas)}</div>',
-        unsafe_allow_html=True,
-    )
+    return linhas
+
+
+def lista_html(cartoes, aviso=None, classe=""):
+    topo = f'<div class="lista-topo">{aviso}</div>' if aviso else ""
+    return f'<div class="lista {classe}">{topo}{"".join(cartoes)}</div>'
+
+
+def lista_clicavel(cartoes, aviso, chave, classe=""):
+    """Mostra a lista e devolve o número do candidato clicado nesta execução (ou None)."""
+    resultado = _LISTA(key=chave, data={"html": lista_html(cartoes, aviso, classe)}, on_clique_change=lambda: None)
+    clique = resultado.clique if resultado is not None else None
+    if not clique:
+        return None
+    # ignora um clique que já foi tratado (o valor traz o horário do clique)
+    if st.session_state.get("_ultimo_clique") == clique:
+        return None
+    st.session_state["_ultimo_clique"] = clique
+    return str(clique).rsplit("|", 1)[0]
 
 
 def arquivo_resumo():
@@ -976,95 +1167,38 @@ elif escolas_f is not None and bairros_alvo is not None:
         })
         st.dataframe(lista_escolas, hide_index=True)
 
-# ------------------------------------------------------------ mapa das escolas
-if ds is not None:
-    with st.expander("Mapa das escolas", expanded=True):
-        esc_mapa = agregar_escolas(base)
-        desenhar_mapa(entrada_mapa(
-            esc_mapa["NM_LOCAL_VOTACAO"], esc_mapa["BAIRRO"], esc_mapa["NR_ZONA"],
-            esc_mapa["DS_LOCAL_VOTACAO_ENDERECO"], esc_mapa["LAT"], esc_mapa["LON"],
-            esc_mapa["VOTOS_TOTAL"],
-            "Votos nominais: " + esc_mapa["VOTOS_TOTAL"].map(formatar)
-            + " | seções: " + esc_mapa["NSECOES"].astype(str),
-        ))
-
-# ------------------------------------------------------ ranking de candidatos
-chave = f"tabela|{ano}|{turno}|{cargo}|{municipio}|{bairro_txt}|{escola_sel}|{secao_sel}"
-MAIS_VOTADOS, ALFABETICA, TODOS_PARTIDOS = "Mais votados", "A–Z", "Todos os partidos"
-
-with st.form("filtro_candidatos", border=False):
-    f1, f2 = st.columns([8, 1], vertical_alignment="bottom")
-    texto_filtro = f1.text_input(
-        "Filtrar por nome ou partido", placeholder="Filtrar por nome ou partido", label_visibility="collapsed",
-    )
-    f2.form_submit_button("Filtrar", use_container_width=True)
-o1, o2, _ = st.columns([2, 2, 6], vertical_alignment="center")
-ordem_lista = o1.segmented_control(
-    "Ordem", [MAIS_VOTADOS, ALFABETICA], default=MAIS_VOTADOS, label_visibility="collapsed",
-) or MAIS_VOTADOS
-lista_partidos = sorted(p for p in resultado["Partido"].unique() if p)
-partido_sel = o2.selectbox("Partido", [TODOS_PARTIDOS] + lista_partidos, label_visibility="collapsed")
-
-visivel = resultado
-if texto_filtro.strip():
-    alvo = visivel["Candidato"] + " " + visivel["Partido"] + " " + visivel["Número"] + " " + visivel["Situação"]
-    if por_cidade:
-        alvo = alvo + " " + visivel["Município"]
-    alvo = alvo.map(normalizar)
-    visivel = visivel[alvo.str.contains(normalizar(texto_filtro), regex=False)]
-if partido_sel != TODOS_PARTIDOS:
-    visivel = visivel[visivel["Partido"] == partido_sel]
-if ordem_lista == ALFABETICA:
-    visivel = visivel.sort_values("Candidato", key=lambda s: s.map(normalizar))
-visivel = visivel.reset_index(drop=True)
-
-if visivel.empty:
-    st.info("Nenhum candidato encontrado com esse filtro.")
-else:
-    qtd_chave = f"qtd|{chave}|{texto_filtro}|{partido_sel}|{ordem_lista}"
-    qtd = st.session_state.get(qtd_chave, 10)
-    aviso = (
-        "Escolha um <b>município</b> nos <b>filtros</b> para ver a votação de cada candidato <b>por escola</b>."
-        if ds is None else
-        "Para ver a votação de um candidato <b>por escola</b>, clique nele na <b>tabela completa</b> abaixo."
-    )
-    colunas_lista = ["Pos.", "Candidato", "Número", "Partido", "Situação", "Votos", "% dos votos nominais"]
-    if por_cidade:
-        colunas_lista.append("Município")
-    lista_candidatos(
-        visivel.head(qtd)[colunas_lista].rename(columns={"Pos.": "Pos", "% dos votos nominais": "Pct"}),
-        aviso, foto_de,
-    )
-    if len(visivel) > qtd:
-        if st.button(f"Mostrar mais ({len(visivel) - qtd} restantes)", key=f"mais|{qtd_chave}"):
-            st.session_state[qtd_chave] = qtd + 20
-            st.rerun()
-
-candidato = None
-if ds is None:
-    st.markdown("**Tabela completa**")
-    st.dataframe(visivel, hide_index=True)
-elif not visivel.empty:
-    st.markdown("**Tabela completa** - clique em um candidato para ver a votação dele por escola")
-    chave_tabela = f"{chave}|{texto_filtro}|{partido_sel}|{ordem_lista}"
-    try:
-        evento = st.dataframe(
-            visivel, hide_index=True,
-            on_select="rerun", selection_mode="single-row", key=chave_tabela,
-        )
-        linhas = evento.selection.rows
-        if linhas:
-            candidato = visivel.iloc[linhas[0]]
-    except TypeError:
-        # Streamlit antigo, sem clique na tabela: usa uma lista de escolha
-        st.dataframe(visivel, hide_index=True)
-        opcoes = ["(nenhum)"] + (visivel["Número"] + " - " + visivel["Candidato"]).tolist()
-        escolhido = st.selectbox("Candidato", opcoes, key=f"cand|{chave_tabela}")
-        if escolhido != "(nenhum)":
-            candidato = visivel.iloc[opcoes.index(escolhido) - 1]
-
 # ------------------------------------------ votação do candidato por escola
-if candidato is not None:
+def mostrar_secoes(nome, numero, escola_c):
+    """Votação do candidato em cada seção (urna) de uma escola, com o total de votos nominais da seção."""
+    da_escola = ds_bairro[
+        (ds_bairro["NR_ZONA"] == escola_c["Zona"]) & (ds_bairro["NR_LOCAL_VOTACAO"] == escola_c["NR_LOCAL_VOTACAO"])
+    ]
+    por_secao = texto(agrupar(da_escola, "NR_SECAO")["QT_VOTOS"].sum()).rename(
+        columns={"QT_VOTOS": "Votos nominais na seção"}
+    )
+    do_cand = texto(
+        agrupar(da_escola[da_escola["NR_VOTAVEL"] == numero], "NR_SECAO")["QT_VOTOS"].sum()
+    ).rename(columns={"QT_VOTOS": f"Votos de {nome}"})
+    por_secao = por_secao.merge(do_cand, on="NR_SECAO", how="left")
+    votos_c = por_secao[f"Votos de {nome}"].fillna(0).astype(int)
+    por_secao[f"Votos de {nome}"] = votos_c
+    por_secao["% da seção"] = (votos_c / por_secao["Votos nominais na seção"].where(lambda v: v > 0) * 100).round(2)
+    por_secao["_n"] = pd.to_numeric(por_secao["NR_SECAO"], errors="coerce")
+    por_secao = por_secao.sort_values("_n").rename(columns={"NR_SECAO": "Seção"})[
+        ["Seção", f"Votos de {nome}", "Votos nominais na seção", "% da seção"]
+    ]
+
+    st.markdown(
+        f"**Votação de {nome} por seção (urna) - {escola_c['Escola']} (zona {escola_c['Zona']})**"
+    )
+    c1, c2 = st.columns(2)
+    c1.metric("Votos na escola", formatar(votos_c.sum()))
+    c2.metric("Seções com votos", f"{int((votos_c > 0).sum())} de {len(por_secao)}")
+    st.dataframe(por_secao, hide_index=True)
+
+
+def mostrar_candidato(candidato):
+    """Votação do candidato por escola (e, clicando na escola, por seção), mapa e comparação entre anos."""
     numero = candidato["Número"]
     nome = candidato["Candidato"]
     do_candidato = ds_bairro[ds_bairro["NR_VOTAVEL"] == numero]
@@ -1088,12 +1222,10 @@ if candidato is not None:
         (por_escola["Votos"] / total_cand * 100).round(2) if total_cand else 0
     )
     por_escola.insert(0, "Pos.", range(1, len(por_escola) + 1))
-    por_escola = por_escola.rename(columns={"NR_ZONA": "Zona"})[
-        ["Pos.", "Escola", "Bairro/localidade", "Zona", "Endereço", "Votos",
-         "% dos votos do candidato", "Seções com votos"]
-    ]
+    por_escola = por_escola.rename(columns={"NR_ZONA": "Zona"})
+    colunas_escola = ["Pos.", "Escola", "Bairro/localidade", "Zona", "Endereço", "Votos",
+                      "% dos votos do candidato", "Seções com votos"]
 
-    st.divider()
     escopo = f" - {bairro_txt}" if bairro_txt else ""
     st.subheader(f"Votação de {nome} ({numero}) por escola - {municipio}{escopo} - {ano}")
     st.metric("Votos do candidato nesta seleção", formatar(total_cand))
@@ -1103,11 +1235,17 @@ if candidato is not None:
     st.markdown("**15 escolas com mais votos**")
     st.bar_chart(grafico.set_index("Rótulo")["Votos"])
 
-    st.markdown("**Todas as escolas, da maior para a menor votação**")
-    st.dataframe(por_escola, hide_index=True)
+    st.markdown("**Todas as escolas, da maior para a menor votação** - clique em uma escola para ver "
+                "a votação por seção (urna)")
+    evento = st.dataframe(
+        por_escola, hide_index=True, column_order=colunas_escola,
+        on_select="rerun", selection_mode="single-row", key=f"escolas|{chave}|{numero}",
+    )
+    if evento.selection.rows:
+        mostrar_secoes(nome, numero, por_escola.iloc[evento.selection.rows[0]])
     st.download_button(
         "Baixar lista por escola (CSV)",
-        por_escola.to_csv(index=False).encode("utf-8"),
+        por_escola[colunas_escola].to_csv(index=False).encode("utf-8"),
         file_name=f"votos_{ano}_{numero}_por_escola.csv",
         mime="text/csv",
     )
@@ -1262,6 +1400,105 @@ if candidato is not None:
                         file_name=f"comparacao_{antigo}_{novo}_{numero}.csv",
                         mime="text/csv",
                     )
+
+# ------------------------------------------------------ ranking de candidatos
+chave = f"tabela|{ano}|{turno}|{cargo}|{municipio}|{bairro_txt}|{escola_sel}|{secao_sel}"
+MAIS_VOTADOS, ALFABETICA, TODOS_PARTIDOS = "Mais votados", "A–Z", "Todos os partidos"
+
+area_busca = st.container()   # o campo de busca fica acima, mas as sugestões dependem do partido escolhido
+o1, o2, _ = st.columns([2, 2, 6], vertical_alignment="center")
+ordem_lista = o1.segmented_control(
+    "Ordem", [MAIS_VOTADOS, ALFABETICA], default=MAIS_VOTADOS, label_visibility="collapsed",
+) or MAIS_VOTADOS
+lista_partidos = sorted(p for p in resultado["Partido"].unique() if p)
+partido_sel = o2.selectbox("Partido", [TODOS_PARTIDOS] + lista_partidos, label_visibility="collapsed")
+
+do_partido = resultado if partido_sel == TODOS_PARTIDOS else resultado[resultado["Partido"] == partido_sel]
+alvo_busca = do_partido["Candidato"] + " " + do_partido["Partido"] + " " + do_partido["Número"] + " " + do_partido["Situação"]
+if por_cidade:
+    alvo_busca = alvo_busca + " " + do_partido["Município"]
+alvo_busca = alvo_busca.map(normalizar)
+
+
+def filtrar_texto(texto_busca):
+    if len(texto_busca.strip()) < MINIMO_BUSCA:
+        return do_partido
+    return do_partido[alvo_busca.str.contains(normalizar(texto_busca), regex=False)]
+
+
+def sugestoes(texto_busca):
+    """Até 8 candidatos (mais votados primeiro) que contêm o texto, para a lista do autocomplete."""
+    achados = filtrar_texto(texto_busca).head(8)
+    extras = achados["Partido"] + " · nº " + achados["Número"]
+    if por_cidade:
+        extras = extras + " · " + achados["Município"]
+    return [{"valor": v, "extra": e} for v, e in zip(achados["Candidato"], extras)]
+
+
+with area_busca:
+    texto_filtro = campo_busca(
+        "busca_candidato", sugestoes, f"Filtrar por nome, número ou partido (a partir de {MINIMO_BUSCA} letras)",
+    )
+visivel = filtrar_texto(texto_filtro)
+if ordem_lista == ALFABETICA:
+    visivel = visivel.sort_values("Candidato", key=lambda s: s.map(normalizar))
+visivel = visivel.reset_index(drop=True)
+
+if visivel.empty:
+    st.info("Nenhum candidato encontrado com esse filtro.")
+else:
+    qtd_chave = f"qtd|{chave}|{texto_filtro}|{partido_sel}|{ordem_lista}"
+    qtd = st.session_state.get(qtd_chave, 10)
+    colunas_lista = ["Pos.", "Candidato", "Número", "Partido", "Situação", "Votos", "% dos votos nominais"]
+    if por_cidade:
+        colunas_lista.append("Município")
+    mostrados = visivel.head(qtd)
+    tabela_lista = mostrados[colunas_lista].rename(columns={"Pos.": "Pos", "% dos votos nominais": "Pct"})
+
+    if ds is None:
+        aviso = "Escolha um <b>município</b> nos <b>filtros</b> para ver a votação de cada candidato <b>por escola</b>."
+        st.markdown(lista_html(cartoes_candidatos(tabela_lista, foto_de), aviso), unsafe_allow_html=True)
+    else:
+        # candidato aberto (clicado) - vale só para esta combinação de filtros
+        aberto = st.session_state.get("cand_aberto", {}).get(chave)
+        numeros = mostrados["Número"].tolist()
+        corte = numeros.index(aberto) + 1 if aberto in numeros else len(numeros)
+        cartoes = cartoes_candidatos(tabela_lista, foto_de, aberto, clicavel=True)
+        aviso = "Clique em um candidato para ver a votação dele <b>por escola</b> (clique de novo para fechar)."
+
+        base_chave = f"lista|{chave}|{texto_filtro}|{partido_sel}|{ordem_lista}|{qtd}|{aberto}"
+        clicados = [lista_clicavel(cartoes[:corte], aviso, base_chave + "|a")]
+        if aberto in numeros:
+            with st.container(border=True):
+                mostrar_candidato(mostrados.iloc[corte - 1])
+            if corte < len(cartoes):
+                clicados.append(lista_clicavel(cartoes[corte:], None, base_chave + "|b", "lista-b"))
+        clicado = next((c for c in clicados if c), None)
+        if clicado:
+            abertos = st.session_state.setdefault("cand_aberto", {})
+            abertos[chave] = None if clicado == aberto else clicado
+            st.rerun()
+
+    if len(visivel) > qtd:
+        if st.button(f"Mostrar mais ({len(visivel) - qtd} restantes)", key=f"mais|{qtd_chave}"):
+            st.session_state[qtd_chave] = qtd + 20
+            st.rerun()
+
+if ds is None and not visivel.empty:
+    with st.expander("Tabela completa"):
+        st.dataframe(visivel, hide_index=True)
+
+# ------------------------------------------------------------ mapa das escolas
+if ds is not None:
+    with st.expander("Mapa das escolas", expanded=True):
+        esc_mapa = agregar_escolas(base)
+        desenhar_mapa(entrada_mapa(
+            esc_mapa["NM_LOCAL_VOTACAO"], esc_mapa["BAIRRO"], esc_mapa["NR_ZONA"],
+            esc_mapa["DS_LOCAL_VOTACAO_ENDERECO"], esc_mapa["LAT"], esc_mapa["LON"],
+            esc_mapa["VOTOS_TOTAL"],
+            "Votos nominais: " + esc_mapa["VOTOS_TOTAL"].map(formatar)
+            + " | seções: " + esc_mapa["NSECOES"].astype(str),
+        ))
 
 st.download_button(
     "Baixar tabela de candidatos (CSV)",
