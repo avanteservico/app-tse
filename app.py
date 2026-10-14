@@ -844,6 +844,9 @@ def desenhar_mapa(entrada, modo="votos"):
         st.pydeck_chart(pdk.Deck(
             layers=[camada],
             initial_view_state=visao,
+            # fundo no estilo do Google Maps (ruas, rodovias em amarelo, áreas verdes e nomes), sem chave de API
+            map_provider="carto",
+            map_style=pdk.map_styles.CARTO_ROAD,
             tooltip={"html": "{tip}", "style": {"backgroundColor": "white", "color": "#222", "fontSize": "13px"}},
         ))
     else:
