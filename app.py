@@ -205,6 +205,10 @@ header[data-testid="stHeader"] { background: transparent; }
 .st-key-cmp_escolha [data-testid="stMultiSelectTagsContainer"] > span > span:nth-of-type(2) { background: #2471a3 !important; }
 .st-key-cmp_escolha [data-testid="stMultiSelectTagsContainer"] > span > span:nth-of-type(3) { background: #d68910 !important; }
 .st-key-cmp_escolha [data-testid="stMultiSelectTagsContainer"] > span > span:nth-of-type(4) { background: #7d3c98 !important; }
+.st-key-cmp_mun_escolha [data-testid="stMultiSelectTagsContainer"] > span > span:nth-of-type(1) { background: #16a085 !important; }
+.st-key-cmp_mun_escolha [data-testid="stMultiSelectTagsContainer"] > span > span:nth-of-type(2) { background: #2471a3 !important; }
+.st-key-cmp_mun_escolha [data-testid="stMultiSelectTagsContainer"] > span > span:nth-of-type(3) { background: #d68910 !important; }
+.st-key-cmp_mun_escolha [data-testid="stMultiSelectTagsContainer"] > span > span:nth-of-type(4) { background: #7d3c98 !important; }
 .cmp-tab tfoot td { position: sticky; bottom: 0; background: #f4f1ea; font-weight: 600; border-bottom: 0; }
 @media (max-width: 640px) {
   .cand { grid-template-columns: 40px 22px 1fr auto; column-gap: 8px; }
@@ -543,6 +547,28 @@ def lista_clicavel(cartoes, aviso, chave, classe=""):
         return None
     st.session_state["_ultimo_clique"] = clique
     return str(clique).rsplit("|", 1)[0]
+
+
+def renderizar_lista_candidatos(mostrados, tabela_lista, aviso, abrir):
+    """Lista clicável de candidatos: ao clicar em um, chama abrir(linha) dentro de um cartão
+    (clique de novo fecha). Usa as variáveis globais da seleção atual (chave, texto_filtro, partido_sel,
+    ordem_lista, qtd, foto_de), definidas antes da chamada."""
+    aberto = st.session_state.get("cand_aberto", {}).get(chave)
+    numeros = mostrados["Número"].tolist()
+    corte = numeros.index(aberto) + 1 if aberto in numeros else len(numeros)
+    cartoes = cartoes_candidatos(tabela_lista, foto_de, aberto, clicavel=True)
+    base_chave = f"lista|{chave}|{texto_filtro}|{partido_sel}|{ordem_lista}|{qtd}|{aberto}"
+    clicados = [lista_clicavel(cartoes[:corte], aviso, base_chave + "|a")]
+    if aberto in numeros:
+        with st.container(border=True):
+            abrir(mostrados.iloc[corte - 1])
+        if corte < len(cartoes):
+            clicados.append(lista_clicavel(cartoes[corte:], None, base_chave + "|b", "lista-b"))
+    clicado = next((c for c in clicados if c), None)
+    if clicado:
+        abertos = st.session_state.setdefault("cand_aberto", {})
+        abertos[chave] = None if clicado == aberto else clicado
+        st.rerun()
 
 
 def arquivo_resumo():
@@ -1159,7 +1185,8 @@ else:
     painel.header("Filtros")
 anos = sorted(dados["ANO"].unique(), reverse=True)
 ano = painel.selectbox("Ano da eleição", anos)
-d = dados[dados["ANO"] == ano]
+dados_ano = dados[dados["ANO"] == ano]   # todos os cargos/turnos do ano, na Bahia toda (comparativo por município)
+d = dados_ano
 
 turno = painel.selectbox("Turno", sorted(d["NR_TURNO"].unique()))
 d = d[d["NR_TURNO"] == turno]
@@ -1524,6 +1551,137 @@ def mostrar_comparativo(numero, nome):
     )
 
 
+def mostrar_comparativo_municipios(numero, nome):
+    """Com 'Todos os municípios': compara a votação nominal do candidato com até MAX_COMPARAR outros, por
+    município, dentro da mesma eleição (ano/turno). Só para cargos estaduais/federais (o número do candidato
+    não se repete entre cidades; prefeito/vereador já aparecem com uma linha por cidade na lista principal)."""
+    st.divider()
+    st.subheader(f"Comparar {nome} com outros candidatos, por município")
+    universo = dados_ano[dados_ano["NR_TURNO"] == turno]
+    cands = texto(agrupar(universo, ["DS_CARGO", "NR_VOTAVEL", "NM_VOTAVEL"])["QT_VOTOS"].sum())
+    cands = cands[~cands["DS_CARGO"].map(eh_municipal)]
+    cands["_mesmo_cargo"] = cands["DS_CARGO"] == cargo
+    cands = cands.sort_values(["_mesmo_cargo", "DS_CARGO", "QT_VOTOS"], ascending=[False, True, False])
+    cands = cands[~((cands["DS_CARGO"] == cargo) & (cands["NR_VOTAVEL"] == numero))]
+    rotulo = cands["NM_VOTAVEL"] + " · " + cands["DS_CARGO"] + " nº " + cands["NR_VOTAVEL"]
+    chaves = dict(zip(rotulo, zip(cands["DS_CARGO"], cands["NR_VOTAVEL"], cands["NM_VOTAVEL"])))
+    with st.container(key="cmp_mun_escolha"):   # a chave dá a classe CSS que pinta cada etiqueta com a cor dele
+        escolhidos = st.multiselect(
+            f"Candidatos para comparar (até {MAX_COMPARAR})", list(chaves), max_selections=MAX_COMPARAR,
+            placeholder="Buscar candidato pelo nome...", key=f"comparar_mun|{ano}|{turno}|{numero}",
+        )
+    if not escolhidos:
+        st.caption(f"Escolha até {MAX_COMPARAR} candidatos de {ano} ({turno}º turno) para comparar a votação "
+                   f"deles por município com a de {nome}.")
+        return
+
+    comparados = [(cargo, numero, nome)] + [chaves[r] for r in escolhidos]
+    medida = st.segmented_control(
+        "Medida", [ABSOLUTO, PCT_CANDIDATO], default=ABSOLUTO, label_visibility="collapsed",
+        key=f"cmp_mun_medida|{numero}",
+    ) or ABSOLUTO
+
+    tabela = None
+    colunas = []
+    for i, (cargo_c, num_c, nome_c) in enumerate(comparados):
+        votos = texto(agrupar(
+            universo[(universo["DS_CARGO"] == cargo_c) & (universo["NR_VOTAVEL"] == num_c)], ["NM_MUNICIPIO"]
+        )["QT_VOTOS"].sum())
+        col = f"c{i}"
+        votos = votos.rename(columns={"QT_VOTOS": col})
+        tabela = votos if tabela is None else tabela.merge(votos, on="NM_MUNICIPIO", how="outer")
+        colunas.append((col, cargo_c, num_c, nome_c, CORES_COMPARATIVO[i]))
+    for col, *_ in colunas:
+        tabela[col] = tabela[col].fillna(0).astype(int)
+    tabela = tabela.sort_values([c for c, *_ in colunas], ascending=False).reset_index(drop=True)
+    totais = {col: int(tabela[col].sum()) for col, *_ in colunas}
+
+    def valor(linha, col):
+        v = linha[col]
+        return v / totais[col] * 100 if medida == PCT_CANDIDATO and totais[col] else (0.0 if medida == PCT_CANDIDATO else v)
+
+    mostrar = lambda v: formatar(v) if medida == ABSOLUTO else formatar_pct(v)
+
+    etiquetas = "".join(
+        f'<span class="cmp-chip"><i style="background:{cor}"></i>{html.escape(n)} · {html.escape(cg)} '
+        f'<b>{formatar(totais[col])}</b></span>'
+        for col, cg, _, n, cor in colunas
+    )
+    st.markdown(f'<div class="cmp-chips">{etiquetas}</div>', unsafe_allow_html=True)
+
+    cab = "".join(
+        f'<th><span><i style="background:{cor}"></i>{html.escape(n)}</span>'
+        f'<small>{html.escape(cg)} nº {html.escape(nm)}</small></th>'
+        for _, cg, nm, n, cor in colunas
+    )
+    linhas_html, linhas_csv = [], []
+    for _, linha in tabela.iterrows():
+        valores = [valor(linha, col) for col, *_ in colunas]
+        maior = max(valores)
+        local = html.escape(linha["NM_MUNICIPIO"])
+        celulas = "".join(
+            f'<td class="{"maior" if v == maior and maior > 0 else ""}">{mostrar(v)}</td>' for v in valores
+        )
+        linhas_html.append(f"<tr><td>{local}</td>{celulas}</tr>")
+        linhas_csv.append({"Município": linha["NM_MUNICIPIO"],
+                            **{f"{n} ({cg} {nm})": round(v, 2) for (_, cg, nm, n, _), v in zip(colunas, valores)}})
+    rodape = "".join(
+        f"<td>{formatar(totais[col]) if medida == ABSOLUTO else '100,00%'}</td>" for col, *_ in colunas
+    )
+    st.markdown(
+        f'<div class="cmp-tab"><table><thead><tr><th>Município</th>{cab}</tr></thead>'
+        f'<tbody>{"".join(linhas_html)}</tbody><tfoot><tr><td>Total</td>{rodape}</tr></tfoot></table></div>',
+        unsafe_allow_html=True,
+    )
+    st.caption(f"{len(tabela)} município(s) onde algum deles teve votos. "
+               + ("Votos nominais de cada candidato." if medida == ABSOLUTO
+                  else "Quanto daquele município representa da votação total de cada candidato no estado.")
+               + " Em negrito, o maior valor de cada linha.")
+    st.download_button(
+        "Baixar comparativo por município (CSV)",
+        pd.DataFrame(linhas_csv).to_csv(index=False).encode("utf-8-sig"),
+        file_name=f"comparativo_{ano}_{numero}_municipios.csv",
+        mime="text/csv", key=f"cmp_mun_csv|{numero}",
+    )
+
+
+def mostrar_candidato_por_municipio(candidato):
+    """Com 'Todos os municípios': trajetória do candidato, votação dele em cada município (do maior para o
+    menor) e comparação com outros candidatos pelos municípios."""
+    numero = candidato["Número"]
+    nome = candidato["Candidato"]
+    do_candidato = d[d["NR_VOTAVEL"] == numero]
+
+    por_municipio = texto(
+        agrupar(do_candidato, ["NM_MUNICIPIO"])["QT_VOTOS"].sum()
+        .sort_values("QT_VOTOS", ascending=False)
+        .reset_index(drop=True)
+    )
+    total_cand = int(por_municipio["QT_VOTOS"].sum())
+    por_municipio["% dos votos do candidato"] = (
+        (por_municipio["QT_VOTOS"] / total_cand * 100).round(2) if total_cand else 0
+    )
+    por_municipio.insert(0, "Pos.", range(1, len(por_municipio) + 1))
+    por_municipio = por_municipio.rename(columns={"NM_MUNICIPIO": "Município", "QT_VOTOS": "Votos"})
+    colunas_mun = ["Pos.", "Município", "Votos", "% dos votos do candidato"]
+
+    with st.expander(f"Trajetória de {nome} em todas as eleições", expanded=True):
+        mostrar_trajetoria(pessoa_do_numero.get(numero), nome)
+
+    st.subheader(f"Votação de {nome} ({numero}) por município - {ano} ({turno}º turno)")
+    st.metric("Votos do candidato na Bahia", formatar(total_cand))
+    st.markdown("**Todos os municípios onde ele teve votos, do maior para o menor**")
+    st.dataframe(por_municipio, hide_index=True, column_order=colunas_mun)
+    st.download_button(
+        "Baixar votos por município (CSV)",
+        por_municipio[colunas_mun].to_csv(index=False).encode("utf-8"),
+        file_name=f"votos_{ano}_{numero}_por_municipio.csv",
+        mime="text/csv",
+    )
+
+    mostrar_comparativo_municipios(numero, nome)
+
+
 def mostrar_candidato(candidato):
     """Votação do candidato por escola (e, clicando na escola, por seção), mapa e comparação entre anos."""
     numero = candidato["Número"]
@@ -1806,28 +1964,15 @@ else:
     tabela_lista = mostrados[colunas_lista].rename(columns={"Pos.": "Pos", "% dos votos nominais": "Pct"})
 
     if ds is None:
-        aviso = "Escolha um <b>município</b> nos <b>filtros</b> para ver a votação de cada candidato <b>por escola</b>."
-        st.markdown(lista_html(cartoes_candidatos(tabela_lista, foto_de), aviso), unsafe_allow_html=True)
+        if por_cidade:
+            aviso = "Escolha um <b>município</b> nos <b>filtros</b> para ver a votação de cada candidato <b>por escola</b>."
+            st.markdown(lista_html(cartoes_candidatos(tabela_lista, foto_de), aviso), unsafe_allow_html=True)
+        else:
+            aviso = "Clique em um candidato para ver a votação dele <b>por município</b> (clique de novo para fechar)."
+            renderizar_lista_candidatos(mostrados, tabela_lista, aviso, mostrar_candidato_por_municipio)
     else:
-        # candidato aberto (clicado) - vale só para esta combinação de filtros
-        aberto = st.session_state.get("cand_aberto", {}).get(chave)
-        numeros = mostrados["Número"].tolist()
-        corte = numeros.index(aberto) + 1 if aberto in numeros else len(numeros)
-        cartoes = cartoes_candidatos(tabela_lista, foto_de, aberto, clicavel=True)
         aviso = "Clique em um candidato para ver a votação dele <b>por escola</b> (clique de novo para fechar)."
-
-        base_chave = f"lista|{chave}|{texto_filtro}|{partido_sel}|{ordem_lista}|{qtd}|{aberto}"
-        clicados = [lista_clicavel(cartoes[:corte], aviso, base_chave + "|a")]
-        if aberto in numeros:
-            with st.container(border=True):
-                mostrar_candidato(mostrados.iloc[corte - 1])
-            if corte < len(cartoes):
-                clicados.append(lista_clicavel(cartoes[corte:], None, base_chave + "|b", "lista-b"))
-        clicado = next((c for c in clicados if c), None)
-        if clicado:
-            abertos = st.session_state.setdefault("cand_aberto", {})
-            abertos[chave] = None if clicado == aberto else clicado
-            st.rerun()
+        renderizar_lista_candidatos(mostrados, tabela_lista, aviso, mostrar_candidato)
 
     if len(visivel) > qtd:
         if st.button(f"Mostrar mais ({len(visivel) - qtd} restantes)", key=f"mais|{qtd_chave}"):
