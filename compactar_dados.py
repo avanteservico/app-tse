@@ -38,6 +38,7 @@ def main():
 
     historico = PASTA_DADOS / "historico" / "votos_historico_ba.csv"
     historico_resumo = PASTA_DADOS / "historico" / "resumo_estadual_ba.csv"
+    intermediario = PASTA_DADOS / "intermediario" / "votos_intermediario_ba.csv"
 
     # começa do zero para não sobrar arquivo velho
     if PASTA_APP.exists():
@@ -52,6 +53,9 @@ def main():
         print("Resultados históricos (1960-1990) incluídos.")
     if historico_resumo.exists():
         total += compactar(historico_resumo, PASTA_APP / "resumo_estadual_ba.parquet")
+    if intermediario.exists():
+        total += compactar(intermediario, PASTA_APP / "votos_intermediario_ba.parquet")
+        print("Resultados intermediários (1994-2014) incluídos.")
 
     grandes = []
     for i, arquivo in enumerate(municipios, start=1):
