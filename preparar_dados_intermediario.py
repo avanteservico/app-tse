@@ -53,10 +53,15 @@ def processar_ano(arquivo, ano):
         print("Colunas do arquivo:", cabecalho)
         raise SystemExit("Copie esta mensagem e cole no Claude para ajustar o script (layout diferente nesse ano).")
 
+    extra = ["QT_VOTOS_NOMINAIS_VALIDOS"] if "QT_VOTOS_NOMINAIS_VALIDOS" in cabecalho else []
     df = pd.read_csv(
-        arquivo, sep=";", encoding=encoding, usecols=COLUNAS_LEITURA, dtype=str, keep_default_na=False,
+        arquivo, sep=";", encoding=encoding, usecols=COLUNAS_LEITURA + extra, dtype=str, keep_default_na=False,
     )
-    df["QT_VOTOS_NOMINAIS"] = pd.to_numeric(df["QT_VOTOS_NOMINAIS"], errors="coerce").fillna(0).astype(int)
+    df["QT_VOTOS_NOMINAIS"] = pd.to_numeric(df["QT_VOTOS_NOMINAIS"], errors="coerce").fillna(0).clip(lower=0).astype(int)
+    # em 1998 e 2000 o TSE deixou QT_VOTOS_NOMINAIS todo zerado e pôs os votos só em QT_VOTOS_NOMINAIS_VALIDOS
+    if extra and df["QT_VOTOS_NOMINAIS"].sum() == 0:
+        print(f"  {arquivo.name}: QT_VOTOS_NOMINAIS vem zerado; usando QT_VOTOS_NOMINAIS_VALIDOS.")
+        df["QT_VOTOS_NOMINAIS"] = pd.to_numeric(df["QT_VOTOS_NOMINAIS_VALIDOS"], errors="coerce").fillna(0).clip(lower=0).astype(int)
     df["DS_CARGO"] = df["DS_CARGO"].str.strip().str.title()
     nome_urna = df["NM_URNA_CANDIDATO"].str.strip()
     nome_urna = nome_urna.where(nome_urna != "", df["NM_CANDIDATO"].str.strip())

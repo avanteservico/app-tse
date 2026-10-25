@@ -50,6 +50,10 @@ def ler_cadastro(ano):
         print(f"AVISO: {csv} não encontrado (rode python baixar_dados.py); {ano} fica sem fotos/situação.")
         return None
     df = pd.read_csv(csv, sep=";", encoding=detectar_encoding(csv), dtype=str, keep_default_na=False)
+    presidente = PASTA_DADOS / f"consulta_cand_{ano}_BR.csv"   # candidatos a Presidente (UE "BR")
+    if presidente.exists():
+        df = pd.concat([df, pd.read_csv(presidente, sep=";", encoding=detectar_encoding(presidente),
+                                        dtype=str, keep_default_na=False)], ignore_index=True).fillna("")
     faltando = [c for c in COLUNAS if c not in df.columns]
     if faltando:
         print(f"AVISO: {csv.name} não tem as colunas {faltando}; {ano} fica sem fotos/situação.")
@@ -74,11 +78,13 @@ def miniatura(dados):
     return saida.getvalue()
 
 
-def ler_fotos(ano, procurados):
-    """{SQ_CANDIDATO: foto (bytes)}, a partir do ZIP de fotos do TSE (só dos candidatos procurados)."""
-    arquivo = PASTA_DADOS / f"foto_cand{ano}_{UF}_div.zip"
+def ler_fotos(ano, procurados, uf=UF):
+    """{SQ_CANDIDATO: foto (bytes)}, a partir do ZIP de fotos do TSE (só dos candidatos procurados).
+    uf="BR" lê as fotos dos candidatos a Presidente."""
+    arquivo = PASTA_DADOS / f"foto_cand{ano}_{uf}_div.zip"
     if not arquivo.exists():
-        print(f"AVISO: {arquivo} não encontrado (rode python baixar_dados.py); {ano} fica sem fotos.")
+        if uf == UF:
+            print(f"AVISO: {arquivo} não encontrado (rode python baixar_dados.py); {ano} fica sem fotos.")
         return {}
     try:
         import PIL  # noqa: F401
@@ -89,7 +95,7 @@ def ler_fotos(ano, procurados):
     with zipfile.ZipFile(arquivo) as z:
         nomes = z.namelist()
         for i, nome in enumerate(nomes, start=1):
-            achou = re.match(rf"F{UF}(\d+)_div\.(jpe?g|png)$", Path(nome).name, re.IGNORECASE)
+            achou = re.match(rf"F{uf}(\d+)_div\.(jpe?g|png)$", Path(nome).name, re.IGNORECASE)
             if achou and achou.group(1) in procurados and achou.group(1) not in fotos:
                 try:
                     fotos[achou.group(1)] = miniatura(z.read(nome))
@@ -110,7 +116,8 @@ def main():
         cadastro = ler_cadastro(ano)
         if cadastro is None:
             continue
-        fotos = ler_fotos(ano, set(cadastro["SQ_CANDIDATO"]))
+        procurados = set(cadastro["SQ_CANDIDATO"])
+        fotos = {**ler_fotos(ano, procurados), **ler_fotos(ano, procurados, "BR")}
         por_sq = cadastro.drop_duplicates("SQ_CANDIDATO")[["SQ_CANDIDATO", "SG_UE"]]
         por_sq = por_sq.assign(FOTO=por_sq["SQ_CANDIDATO"].map(fotos)).dropna(subset=["FOTO"])
         (PASTA_FOTOS / ano).mkdir(parents=True, exist_ok=True)
@@ -123,7 +130,17 @@ def main():
     if not partes:
         raise SystemExit("Nenhum cadastro de candidatos encontrado. Rode antes: python baixar_dados.py")
     PASTA_APP.mkdir(exist_ok=True)
-    pd.concat(partes, ignore_index=True).to_parquet(DESTINO, index=False, compression="zstd")
+    todos = pd.concat(partes, ignore_index=True)
+    # Candidato substituído fica no cadastro com situação "#NULO#" e o mesmo número de quem o substituiu
+    # (ex.: Lula em 2018, trocado por Haddad no nº 13). O app procura pelo número, então fica a
+    # candidatura totalizada - senão o cartão de Haddad sairia com a foto de Lula e sem o selo.
+    chave = ["ANO", "NR_TURNO", "DS_CARGO", "SG_UE", "NR_CANDIDATO"]
+    antes = len(todos)
+    todos["_sem_total"] = todos["DS_SIT_TOT_TURNO"].str.startswith("#")
+    todos = (todos.sort_values("_sem_total", ascending=False, kind="stable")
+             .drop_duplicates(chave, keep="last").drop(columns="_sem_total").sort_index())
+    print(f"{antes - len(todos)} candidatura(s) substituída(s) com número repetido deixada(s) de fora.")
+    todos.to_parquet(DESTINO, index=False, compression="zstd")
     tamanho = DESTINO.stat().st_size + sum(f.stat().st_size for f in PASTA_FOTOS.rglob("*.parquet"))
     print(f"Pronto! {DESTINO} e {PASTA_FOTOS}: {tamanho / 1024 / 1024:.1f} MB.")
 

@@ -55,6 +55,7 @@ Repetir os dois primeiros quando o TSE atualizar os arquivos (ex.: depois do 2º
 - `eleitorado_locais_votacao/eleitorado_local_votacao_{ano}.zip` (todas as UFs)
 - `consulta_cand/consulta_cand_{ano}.zip` (um CSV por UF + BRASIL; usa-se o `_BA.csv`)
 - Fotos: `https://cdn.tse.jus.br/estatistica/sead/eleicoes/eleicoes{ano}/fotos/foto_cand{ano}_BA_div.zip` (arquivos `FBA<SQ_CANDIDATO>_div.jpg`)
+- **Presidente** (só nas eleições gerais, UE "BR"), em arquivos à parte: `votacao_secao/votacao_secao_{ano}_BR.zip` (Brasil inteiro, ~250 MB; o `baixar_dados.py` guarda só as linhas da Bahia em `dados/presidente_secao_{ano}_BA.csv`), `consulta_cand_{ano}_BR.csv` (dentro do ZIP do cadastro) e `foto_cand{ano}_BR_div.zip` (arquivos `FBR<SQ>_div.jpg`).
 
 Formato dos CSVs: separador `;`; codificação **latin-1 em 2022, mas 2026 pode ser UTF-8** → os scripts detectam sozinhos (`detectar_encoding`). Colunas da votação por seção usadas: `NR_TURNO, CD_MUNICIPIO, NM_MUNICIPIO, NR_ZONA, NR_SECAO, DS_CARGO, NR_VOTAVEL, NM_VOTAVEL, QT_VOTOS, NR_LOCAL_VOTACAO, SQ_CANDIDATO, NM_LOCAL_VOTACAO, DS_LOCAL_VOTACAO_ENDERECO`.
 
@@ -106,6 +107,12 @@ Tela na barra lateral (`Votação` | `Cadastrar bairros das escolas`) → filtro
 - `compactar_dados.py` também gera `dados_app/votos_historico_ba.parquet` e `dados_app/resumo_estadual_ba.parquet` (só se os CSVs de `dados/historico/` existirem).
 - Cargos disponíveis variam por ano, porque até 1990 cada estado tinha seu próprio calendário para eleição de Governador (não havia unificação com a eleição presidencial).
 
+## 8c2. Presidente em 2018, 2022 e 2026 (incluído em 24/10/2026)
+- Antes não aparecia: o arquivo de seção da Bahia (`votacao_secao_{ano}_BA`) não traz Presidente. O `preparar_dados.py` agora lê, por ano, o arquivo da Bahia e também `presidente_secao_{ano}_BA.csv` (função `processar_arquivo`), então Presidente tem tudo igual aos outros cargos: município, bairro, escola, seção, mapa, comparação, foto e selo.
+- No app, o cadastro do Presidente é procurado na UE "BR" (os demais cargos estaduais/federais, "BA"); na trajetória e na comparação entre anos, "BR" vale como "BA" (votos na Bahia inteira).
+- Conferido (AppTest, dados reais): Lula com 72,12% na Bahia no 2º turno de 2022 (foto, selo "Eleito", PT nº 13); Haddad com selo "2º turno" em 2018; votação por escola em Itamaraju e Salvador.
+- **Candidatos substituídos com o mesmo número** (ex.: Lula em 2018, trocado por Haddad no nº 13): o cadastro do TSE guarda os dois, e o substituído fica com situação `#NULO#`. Como o app acha o candidato pelo número, o cartão de Haddad saía com a foto de Lula e sem selo, e a trajetória/comparação de Lula pegava os votos de Haddad. O `preparar_candidatos.py` agora fica só com a candidatura totalizada quando o número se repete (740 candidaturas descartadas, quase todas de prefeito/vereador substituídos; o problema já existia antes, sem ser notado).
+
 ## 8d. Resultados do período intermediário (1994–2014)
 - Entre o histórico de papel (1960-1990) e o layout atual (2016-2026) tem um terceiro formato, que já é digital e por município, mas ainda não tem seção/escola/bairro/mapa de forma confiável. Cobre os 11 pleitos em que esse formato existe: **1994, 1996, 1998, 2000, 2002, 2004, 2006, 2008, 2010, 2012, 2014** (não existe 1992 nesse formato - antes disso só o histórico de papel).
 - Fonte: `votacao_candidato_munzona_{ano}.zip` (`dadosabertos.tse.jus.br`, um arquivo com o Brasil inteiro, UTF-8/latin-1 com cabeçalho) — diferente do histórico de papel, **já vem com nome de urna, partido e situação prontos** (não precisa cruzar com cadastro separado). Granularidade: candidato por **município e zona**; não tem seção, não tem nome/bairro/coordenada de escola (`eleitorado_locais_votacao` só existe de forma confiável a partir de 2010, e mesmo assim a votação por seção desse período tem layout instável ano a ano — por isso optei por não tentar seção aqui, só município).
@@ -114,6 +121,8 @@ Tela na barra lateral (`Votação` | `Cadastrar bairros das escolas`) → filtro
 - **Testado com os 11 anos, dados reais** (969.781 candidaturas): números conferem com a história - Jaques Wagner (PT) eleito governador em 2006 com 3.242.336 votos (52,89%) no 1º turno; ACM Neto (DEM) eleito prefeito de Salvador em 2012 com 717.865 votos no 2º turno.
 - **Integrado ao `app.py`**: `mostrar_resultado_historico()` agora também aceita esses anos - quando o ano tem mais de um município (ou seja, é 1994-2014, não 1960-1990), aparece o seletor de **Município** (com "Todos os municípios"). Com cargo municipal (Prefeito/Vereador) e "Todos os municípios", cada linha é candidato+cidade e a % é dentro da própria cidade - igual o fluxo moderno já faz (`por_cidade`). Sem comparecimento/abstenção nesses anos (esse resumo só existe para 1960-1990); sem bairro/escola/seção/mapa em nenhum dos dois períodos históricos.
 - `compactar_dados.py` também gera `dados_app/votos_intermediario_ba.parquet`.
+- **1998 e 2000**: o TSE deixou `QT_VOTOS_NOMINAIS` **todo zerado** nesses dois anos e pôs os votos só em `QT_VOTOS_NOMINAIS_VALIDOS`. O `preparar_dados_intermediario.py` detecta (soma do arquivo = 0) e usa a outra coluna, avisando no terminal. Conferido: César Borges (PFL) eleito governador em 1998 com 69,9%; Imbassahy (PFL) prefeito de Salvador em 2000 com 53,7%.
+- **Presidente (1994, 1998, 2002, 2006, 2010, 2014)**: não vem no CSV `_BA` do ZIP; fica no `_BR` (ou, em 1998, só no `_BRASIL`, com todos os cargos do país). O `baixar_dados_intermediario.py` separa as linhas de Presidente na Bahia em `votacao_candidato_munzona_<ano>_PRESIDENTE_BA.csv`, que o preparar lê junto. Conferido: FHC com 52,4% na Bahia em 1994; Lula com 66,7% no 1º turno de 2006 e 78,1% no 2º. No 2º turno de 2006 o TSE deixou a situação em branco (`#NULO`), então o selo "Eleito" não aparece nesse turno.
 
 ## 9. Backlog de ideias (só se o usuário pedir)
 - Importar bairros a partir de planilha (CSV/Excel) preenchida fora do app.

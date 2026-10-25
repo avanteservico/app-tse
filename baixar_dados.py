@@ -6,6 +6,8 @@ Para cada ano, baixa:
   - Eleitorado por local de votação (Brasil todo; é daqui que vem o BAIRRO das escolas)
   - Cadastro de candidatos (Brasil todo; é daqui que vem o NOME DE URNA)
   - Fotos dos candidatos (BA)
+  - Nas eleições gerais: votação por seção de Presidente (arquivo do Brasil inteiro; guarda só a Bahia),
+    cadastro e fotos dos candidatos a Presidente
 
 Antes de rodar, instale as bibliotecas (uma vez só):
     pip install requests pandas
@@ -56,7 +58,23 @@ def lista_de_arquivos():
             f"https://cdn.tse.jus.br/estatistica/sead/eleicoes/eleicoes{ano}/fotos/foto_cand{ano}_{UF}_div.zip",
             PASTA_DADOS / f"foto_cand{ano}_{UF}_div.zip",
         ))
+        if eh_ano_geral(ano):   # Presidente vem em arquivos à parte (UE "BR"), com o Brasil inteiro
+            arquivos.append((
+                f"Votação por seção {ano} - Presidente (Brasil inteiro; fica só a Bahia)",
+                f"{BASE}/votacao_secao/votacao_secao_{ano}_BR.zip",
+                PASTA_DADOS / f"votacao_secao_{ano}_BR.zip",
+            ))
+            arquivos.append((
+                f"Fotos dos candidatos a Presidente {ano}",
+                f"https://cdn.tse.jus.br/estatistica/sead/eleicoes/eleicoes{ano}/fotos/foto_cand{ano}_BR_div.zip",
+                PASTA_DADOS / f"foto_cand{ano}_BR_div.zip",
+            ))
     return arquivos
+
+
+def eh_ano_geral(ano):
+    """Eleição geral (Presidente, Governador, Senador, Deputados): 2018, 2022, 2026..."""
+    return int(ano) % 4 == 2
 
 
 def baixar(nome, url, destino):
@@ -98,6 +116,38 @@ def descompactar(arquivo_zip):
         if ATUALIZAR or not destino.exists():
             print(f"   descompactando {nome_csv} ...")
             z.extract(nome_csv, PASTA_DADOS)
+        # no cadastro, os candidatos a Presidente ficam no CSV "_BR" (pequeno)
+        if arquivo_zip.name.startswith("consulta_cand"):
+            for nome_br in [n for n in csvs if n.upper().endswith("_BR.CSV")]:
+                if ATUALIZAR or not (PASTA_DADOS / nome_br).exists():
+                    print(f"   descompactando {nome_br} ...")
+                    z.extract(nome_br, PASTA_DADOS)
+    return destino
+
+
+def extrair_presidente(arquivo_zip):
+    """O ZIP de Presidente por seção tem o Brasil inteiro (vários GB descompactado).
+    Lê em pedaços e grava só as linhas da Bahia em presidente_secao_<ano>_BA.csv."""
+    ano = arquivo_zip.stem.split("_")[2]
+    destino = PASTA_DADOS / f"presidente_secao_{ano}_{UF}.csv"
+    if destino.exists() and not ATUALIZAR:
+        return destino
+    print(f"   separando as seções da Bahia em {destino.name} (pode levar alguns minutos) ...")
+    with zipfile.ZipFile(arquivo_zip) as z:
+        nome_csv = [n for n in z.namelist() if n.lower().endswith(".csv")][0]
+        parcial = destino.with_suffix(".part")
+        parcial.unlink(missing_ok=True)   # sobra de uma execução interrompida
+        linhas = 0
+        with z.open(nome_csv) as origem:
+            # latin-1 lê e grava qualquer byte sem alterar: o arquivo sai na mesma codificação do TSE
+            leitor = pd.read_csv(origem, sep=";", encoding="latin-1", dtype=str, keep_default_na=False,
+                                 chunksize=1_000_000)
+            for i, parte in enumerate(leitor):
+                parte = parte[parte["SG_UF"] == UF]
+                parte.to_csv(parcial, sep=";", encoding="latin-1", index=False, mode="a", header=(i == 0))
+                linhas += len(parte)
+    parcial.replace(destino)
+    print(f"   {linhas:,} linhas da Bahia.")
     return destino
 
 
@@ -140,6 +190,9 @@ def main():
             faltando.append(nome)
             continue
         if destino.name.startswith("foto_cand"):   # fotos: quem usa é o preparar_candidatos.py
+            continue
+        if destino.name.endswith("_BR.zip"):
+            mostrar_resumo(extrair_presidente(destino))
             continue
         csv = descompactar(destino)
         if csv is not None:

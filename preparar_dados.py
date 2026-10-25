@@ -73,67 +73,78 @@ def processar_resultados():
     """Lê a votação por seção de cada ano. Devolve (resumo, pares código/nome, anos lidos)."""
     resumos, pares, anos_ok = [], set(), []
     for ano in ANOS:
-        csv = achar_arquivo(f"votacao_secao_{ano}_*.csv")
-        if csv is None:
+        principal = achar_arquivo(f"votacao_secao_{ano}_*.csv")
+        if principal is None:
             print(f"AVISO: resultados de {ano} não encontrados na pasta 'dados'. Pulando {ano}.")
             continue
-        encoding = detectar_encoding(csv)
-        cabecalho = pd.read_csv(csv, sep=";", encoding=encoding, nrows=0).columns.tolist()
-        faltando = [c for c in COLUNAS_LEITURA if c not in cabecalho]
-        if faltando:
-            print(f"Colunas que eu esperava em {csv.name} e não encontrei:", faltando)
-            print("Colunas do arquivo:", cabecalho)
-            raise SystemExit("Copie esta mensagem e cole no Claude para ajustar o script.")
-
-        # nome de urna: cruza SQ_CANDIDATO (arquivo de votação) com o cadastro de candidatos
-        urnas = ler_nomes_de_urna(ano)
-        colunas_lidas = list(COLUNAS_LEITURA)
-        if urnas is not None:
-            if "SQ_CANDIDATO" in cabecalho:
-                colunas_lidas.append("SQ_CANDIDATO")
-            else:
-                print(f"AVISO: {csv.name} não tem a coluna SQ_CANDIDATO; mantendo os nomes do arquivo de votação.")
-                urnas = None
-        cand_total = cand_urna = 0
-
-        print(f"Lendo resultados de {ano} ({csv.name}) em partes ...")
-        leitor = pd.read_csv(
-            csv, sep=";", encoding=encoding, usecols=colunas_lidas,
-            dtype=str, keep_default_na=False, chunksize=500_000,
-        )
-        for i, parte in enumerate(leitor, start=1):
-            parte["QT_VOTOS"] = pd.to_numeric(parte["QT_VOTOS"], errors="coerce").fillna(0).astype(int)
-            parte["ANO"] = ano
-            parte["DS_CARGO"] = parte["DS_CARGO"].str.strip().str.title()   # 2016 vem "PREFEITO"; os outros, "Prefeito"
-
-            if urnas is not None:
-                sq = parte["SQ_CANDIDATO"].str.strip()
-                nome_urna = sq.map(urnas)
-                achou = nome_urna.notna()
-                parte.loc[achou, "NM_VOTAVEL"] = nome_urna[achou]
-                eh_candidato = pd.to_numeric(sq, errors="coerce") > 0   # branco/nulo/legenda não têm SQ válido
-                cand_total += int(eh_candidato.sum())
-                cand_urna += int((eh_candidato & achou).sum())
-
-            resumos.append(parte.groupby(CHAVES_RESUMO, as_index=False)["QT_VOTOS"].sum())
-
-            for codigo, nome in parte[["CD_MUNICIPIO", "NM_MUNICIPIO"]].drop_duplicates().itertuples(index=False):
-                pares.add((codigo, nome))
-            for codigo, grupo in parte.groupby("CD_MUNICIPIO"):
-                arquivo = PASTA_MUNICIPIOS / f"{codigo}.csv"
-                grupo[COLUNAS_SECAO].to_csv(
-                    arquivo, mode="a", header=not arquivo.exists(), index=False, encoding="utf-8"
-                )
-            print(f"  {ano}: parte {i} processada")
-        if urnas is not None and cand_total:
-            print(f"  {ano}: nome de urna aplicado em {cand_urna / cand_total:.0%} dos registros de candidatos"
-                  + ("" if cand_urna == cand_total else " (os demais ficam com o nome do arquivo de votação)"))
+        # Presidente vem num arquivo à parte (gerado pelo baixar_dados.py só nas eleições gerais)
+        arquivos = [principal] + [a for a in [achar_arquivo(f"presidente_secao_{ano}_*.csv")] if a]
+        urnas_do_ano = ler_nomes_de_urna(ano)
+        for csv in arquivos:
+            resumos += processar_arquivo(csv, ano, urnas_do_ano, pares)
         anos_ok.append(ano)
 
     if not anos_ok:
         raise SystemExit("Nenhum arquivo de resultados encontrado. Rode antes: python baixar_dados.py")
     resumo = pd.concat(resumos).groupby(CHAVES_RESUMO, as_index=False)["QT_VOTOS"].sum()
     return resumo, pares, anos_ok
+
+
+def processar_arquivo(csv, ano, urnas, pares):
+    """Lê um arquivo de votação por seção em pedaços; grava as seções em municipios/<código>.csv
+    e devolve os resumos por município (uma lista de tabelas)."""
+    encoding = detectar_encoding(csv)
+    cabecalho = pd.read_csv(csv, sep=";", encoding=encoding, nrows=0).columns.tolist()
+    faltando = [c for c in COLUNAS_LEITURA if c not in cabecalho]
+    if faltando:
+        print(f"Colunas que eu esperava em {csv.name} e não encontrei:", faltando)
+        print("Colunas do arquivo:", cabecalho)
+        raise SystemExit("Copie esta mensagem e cole no Claude para ajustar o script.")
+
+    # nome de urna: cruza SQ_CANDIDATO (arquivo de votação) com o cadastro de candidatos
+    colunas_lidas = list(COLUNAS_LEITURA)
+    if urnas is not None:
+        if "SQ_CANDIDATO" in cabecalho:
+            colunas_lidas.append("SQ_CANDIDATO")
+        else:
+            print(f"AVISO: {csv.name} não tem a coluna SQ_CANDIDATO; mantendo os nomes do arquivo de votação.")
+            urnas = None
+    cand_total = cand_urna = 0
+    resumos = []
+
+    print(f"Lendo resultados de {ano} ({csv.name}) em partes ...")
+    leitor = pd.read_csv(
+        csv, sep=";", encoding=encoding, usecols=colunas_lidas,
+        dtype=str, keep_default_na=False, chunksize=500_000,
+    )
+    for i, parte in enumerate(leitor, start=1):
+        parte["QT_VOTOS"] = pd.to_numeric(parte["QT_VOTOS"], errors="coerce").fillna(0).astype(int)
+        parte["ANO"] = ano
+        parte["DS_CARGO"] = parte["DS_CARGO"].str.strip().str.title()   # 2016 vem "PREFEITO"; os outros, "Prefeito"
+
+        if urnas is not None:
+            sq = parte["SQ_CANDIDATO"].str.strip()
+            nome_urna = sq.map(urnas)
+            achou = nome_urna.notna()
+            parte.loc[achou, "NM_VOTAVEL"] = nome_urna[achou]
+            eh_candidato = pd.to_numeric(sq, errors="coerce") > 0   # branco/nulo/legenda não têm SQ válido
+            cand_total += int(eh_candidato.sum())
+            cand_urna += int((eh_candidato & achou).sum())
+
+        resumos.append(parte.groupby(CHAVES_RESUMO, as_index=False)["QT_VOTOS"].sum())
+
+        for codigo, nome in parte[["CD_MUNICIPIO", "NM_MUNICIPIO"]].drop_duplicates().itertuples(index=False):
+            pares.add((codigo, nome))
+        for codigo, grupo in parte.groupby("CD_MUNICIPIO"):
+            arquivo = PASTA_MUNICIPIOS / f"{codigo}.csv"
+            grupo[COLUNAS_SECAO].to_csv(
+                arquivo, mode="a", header=not arquivo.exists(), index=False, encoding="utf-8"
+            )
+        print(f"  {ano}: parte {i} processada")
+    if urnas is not None and cand_total:
+        print(f"  {ano}: nome de urna aplicado em {cand_urna / cand_total:.0%} dos registros de candidatos"
+              + ("" if cand_urna == cand_total else " (os demais ficam com o nome do arquivo de votação)"))
+    return resumos
 
 
 def primeira_coluna(cabecalho, candidatas, trecho):

@@ -18,6 +18,7 @@ import sys
 import zipfile
 from pathlib import Path
 
+import pandas as pd
 import requests
 
 UF = "BA"
@@ -65,6 +66,36 @@ def extrair_bahia(arquivo_zip):
     return destino
 
 
+def extrair_presidente(arquivo_zip, ano):
+    """Presidente não vem no CSV da Bahia: fica no "_BR" (ou, em 1998, só no "_BRASIL", com todos os
+    cargos do país). Grava só as linhas de Presidente na Bahia em ..._PRESIDENTE_BA.csv."""
+    destino = PASTA_DADOS / f"votacao_candidato_munzona_{ano}_PRESIDENTE_{UF}.csv"
+    if destino.exists() and not ATUALIZAR:
+        return destino
+    with zipfile.ZipFile(arquivo_zip) as z:
+        nomes = z.namelist()
+        origem = ([n for n in nomes if n.upper().endswith("_BR.CSV")]
+                  or [n for n in nomes if n.upper().endswith("_BRASIL.CSV")])
+        if not origem:
+            print(f"   aviso: não achei os votos de Presidente em {arquivo_zip.name}")
+            return None
+        print(f"   separando Presidente na Bahia de {origem[0]} ...")
+        parcial = destino.with_suffix(".part")
+        parcial.unlink(missing_ok=True)
+        linhas = 0
+        with z.open(origem[0]) as f:
+            # latin-1 lê e grava qualquer byte sem alterar: o arquivo sai na mesma codificação do TSE
+            leitor = pd.read_csv(f, sep=";", encoding="latin-1", dtype=str, keep_default_na=False,
+                                 chunksize=500_000)
+            for i, parte in enumerate(leitor):
+                parte = parte[(parte["SG_UF"] == UF) & (parte["DS_CARGO"].str.upper() == "PRESIDENTE")]
+                parte.to_csv(parcial, sep=";", encoding="latin-1", index=False, mode="a", header=(i == 0))
+                linhas += len(parte)
+    parcial.replace(destino)
+    print(f"   {linhas:,} linhas de Presidente na Bahia.")
+    return destino
+
+
 def main():
     PASTA_DADOS.mkdir(parents=True, exist_ok=True)
     faltando = []
@@ -77,6 +108,8 @@ def main():
             faltando.append(nome)
             continue
         extrair_bahia(destino)
+        if int(ano) % 4 == 2:   # eleição geral: tem Presidente
+            extrair_presidente(destino, ano)
 
     print()
     if faltando:

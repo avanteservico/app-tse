@@ -790,7 +790,7 @@ def trajetoria(pessoa):
             & (resumo["DS_CARGO"].map(normalizar) == normalizar(c.DS_CARGO))
         ]
         municipio_c = ""
-        if c.SG_UE != "BA":
+        if c.SG_UE not in ("BA", "BR"):   # BR = Presidente: votos no estado inteiro, como os cargos "BA"
             municipio_c = nome_do_codigo.get(c.SG_UE, "")
             votos = votos[votos["NM_MUNICIPIO"] == municipio_c]
         situacao = SITUACOES.get(normalizar(c.DS_SIT_TOT_TURNO), "")
@@ -807,7 +807,7 @@ def trajetoria(pessoa):
 
 CORES_CARGO = {
     "VEREADOR": "#a63db1", "PREFEITO": "#d9762b", "DEPUTADO ESTADUAL": "#2456a6",
-    "DEPUTADO FEDERAL": "#1e7b45", "SENADOR": "#b3364a", "GOVERNADOR": "#7a5c2e",
+    "DEPUTADO FEDERAL": "#1e7b45", "SENADOR": "#b3364a", "GOVERNADOR": "#7a5c2e", "PRESIDENTE": "#0f6e73",
 }
 
 
@@ -842,7 +842,7 @@ def mostrar_trajetoria(pessoa, nome):
     st.markdown(f'<div class="traj">{"".join(linhas)}</div>', unsafe_allow_html=True)
     st.caption(
         f"Todas as eleições de {nome} na Bahia desde 2016, da mais antiga à mais recente, na mesma escala "
-        "(a maior votação dele). Votos nominais no estado (deputado, senador, governador) ou no município "
+        "(a maior votação dele). Votos nominais na Bahia (presidente, deputado, senador, governador) ou no município "
         "(prefeito, vereador). A cor indica o cargo."
     )
 
@@ -1475,8 +1475,8 @@ if por_cidade:
     ues = [str(indice.get(m, "")).lstrip("0") for m in resultado["NM_MUNICIPIO"]]
 elif eh_municipal(cargo):
     ues = [str(codigo).lstrip("0")] * len(resultado)
-else:
-    ues = ["BA"] * len(resultado)
+else:   # no cadastro do TSE, Presidente é da UE "BR"; os demais cargos estaduais/federais, "BA"
+    ues = ["BR" if cargo_n == "PRESIDENTE" else "BA"] * len(resultado)
 do_cadastro = [
     cadastro.get((ano, turno, cargo_n, u, n)) or cadastro.get((ano, "1", cargo_n, u, n)) or ("", "", "", "")
     for u, n in zip(ues, resultado["NR_VOTAVEL"])
@@ -1938,7 +1938,7 @@ def mostrar_candidato(candidato):
                 # a mesma pessoa no outro ano: pelo cadastro do TSE (o nome de urna pode ter mudado,
                 # ex.: "DEPUTADO DAL" em 2022 e "DAL BARRETO" em 2026); se não achar, pelo nome de urna
                 da_pessoa = candidaturas_da_pessoa(
-                    ano_b, pessoa_do_numero.get(numero), {"BA", str(codigo).lstrip("0")},
+                    ano_b, pessoa_do_numero.get(numero), {"BA", "BR", str(codigo).lstrip("0")},
                 )
                 mesma_pessoa = [(normalizar(c), n) in da_pessoa for c, n in zip(cands_b["DS_CARGO"], cands_b["NR_VOTAVEL"])]
                 iguais = cands_b[mesma_pessoa]
