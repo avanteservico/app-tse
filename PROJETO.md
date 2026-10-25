@@ -90,6 +90,8 @@ Tela na barra lateral (`Votação` | `Cadastrar bairros das escolas`) → filtro
 - App publicado no **Streamlit Community Cloud** (a Vercel não roda Streamlit). Arquivo principal: `app.py`.
 - Segredos (Streamlit Cloud > Settings > Secrets): `SUPABASE_URL`, `SUPABASE_KEY` (chave **service_role**, nunca no código) e `SENHA_CADASTRO` (protege a tela de cadastro). Sem `SUPABASE_*`, o app usa o CSV local.
 - Com Supabase, os bairros ficam na tabela `bairros_informados` (colunas em minúsculo); RLS ligado sem políticas = só a chave service_role acessa.
+- Se o Supabase não responder (ex.: projeto pausado no plano gratuito, ou `SUPABASE_URL` errado — aparece como `ConnectionError`/`gaierror`), `ler_bairros_informados()` não derruba mais o app: a votação segue com os bairros do TSE e mostra um aviso; a tela de cadastro fica bloqueada até ele voltar (para não salvar em cima de uma lista que pareceria vazia). Corrigido em 24/10/2026, depois de quebrar a tela de Itamaraju no app publicado.
+- Memória: os dados de 1960-2014 (`carregar_historico`) são lidos só com as colunas usadas e com os textos como `category` (~25 MB em vez de ~250 MB), por causa do limite de memória do Streamlit Cloud.
 - Testado localmente (AppTest, dados reais): abrir o app, Itamaraju com bairros informados, Salvador, tela de cadastro. **Não testado**: gravação no Supabase de verdade e memória do Streamlit Cloud com Salvador (~600 MB na memória).
 
 ## 8c. Resultados históricos (1960–1990)

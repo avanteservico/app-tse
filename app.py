@@ -625,13 +625,17 @@ def carregar_historico():
       seção/escola/bairro/mapa (o TSE só passou a ter isso de forma confiável a partir de 2016)."""
     partes = []
     for arquivo in (arquivo_historico(), arquivo_intermediario()):
-        if arquivo.exists():
-            partes.append(ler_tabela(arquivo))
+        if not arquivo.exists():
+            continue
+        if arquivo.suffix == ".parquet":
+            partes.append(pd.read_parquet(arquivo, columns=COLUNAS_HISTORICO))
+        else:
+            partes.append(pd.read_csv(arquivo, dtype=str, keep_default_na=False, usecols=COLUNAS_HISTORICO))
     if not partes:
         return pd.DataFrame(columns=COLUNAS_HISTORICO)
     df = pd.concat(partes, ignore_index=True)
     df["QT_VOTOS"] = pd.to_numeric(df["QT_VOTOS"], errors="coerce").fillna(0).astype(int)
-    return df
+    return como_categoria(df)   # ~970 mil linhas: de ~250 MB para ~25 MB na memória
 
 
 @st.cache_data
@@ -908,14 +912,21 @@ def supabase(metodo, parametros=None, corpo=None, cabecalhos=None):
 def ler_bairros_informados():
     """Bairros que o usuário informou (Supabase, no app publicado; senão dados/bairros_informados.csv)."""
     if USA_SUPABASE:
+        import requests
         linhas, inicio = [], 0
-        while True:   # o Supabase devolve no máximo 1000 linhas por vez
-            parte = supabase("GET", {"select": "*", "order": "cd_municipio,nr_zona,nm_local_n",
-                                     "offset": inicio, "limit": 1000})
-            linhas += parte
-            if len(parte) < 1000:
-                break
-            inicio += 1000
+        try:
+            while True:   # o Supabase devolve no máximo 1000 linhas por vez
+                parte = supabase("GET", {"select": "*", "order": "cd_municipio,nr_zona,nm_local_n",
+                                         "offset": inicio, "limit": 1000})
+                linhas += parte
+                if len(parte) < 1000:
+                    break
+                inicio += 1000
+        except requests.exceptions.RequestException:
+            # Supabase fora do ar (ex.: projeto pausado): segue só com os bairros do TSE
+            st.session_state["supabase_fora"] = True
+            return pd.DataFrame(columns=COLS_BAIRROS)
+        st.session_state["supabase_fora"] = False
         df = pd.DataFrame(linhas, columns=[c.lower() for c in COLS_BAIRROS]).fillna("").astype(str)
         df.columns = COLS_BAIRROS
         return df
@@ -1233,6 +1244,10 @@ def tela_cadastro(indice):
     )
     esc = texto(esc)
     salvos = ler_bairros_informados()
+    if st.session_state.get("supabase_fora"):
+        st.error("Não consegui acessar o Supabase, onde ficam os bairros informados. O cadastro fica "
+                 "bloqueado até ele voltar, para não salvar em cima de uma lista que pareceria vazia.")
+        st.stop()
     salvos = salvos[salvos["CD_MUNICIPIO"] == str(codigo)]
     do_usuario = {(z, n): b for z, n, b in zip(salvos["NR_ZONA"], salvos["NM_LOCAL_N"], salvos["BAIRRO"])}
     esc[COL_INFORMADO] = [do_usuario.get(k, "") for k in zip(esc["_zona_n"], esc["_nome_n"])]
@@ -1358,6 +1373,9 @@ else:
         st.stop()
 
     ds_ano = carregar_municipio(codigo, versao_bairros(), (ano,))
+    if st.session_state.get("supabase_fora"):
+        st.warning("Não consegui acessar o Supabase agora; mostrando só os bairros do TSE "
+                   "(os bairros que você informou voltam a aparecer quando ele responder).")
     ds = ds_ano[(ds_ano["NR_TURNO"] == turno) & (ds_ano["DS_CARGO"] == cargo)]
     escolas_todas = agregar_escolas(ds)
     centro_mun = (escolas_todas["LAT"].median(), escolas_todas["LON"].median())
