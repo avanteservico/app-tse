@@ -95,6 +95,13 @@ Tela na barra lateral (`Votação` | `Cadastrar bairros das escolas`) → filtro
 - Memória: os dados de 1960-2014 (`carregar_historico`) são lidos só com as colunas usadas e com os textos como `category` (~25 MB em vez de ~250 MB), por causa do limite de memória do Streamlit Cloud.
 - Testado localmente (AppTest, dados reais): abrir o app, Itamaraju com bairros informados, Salvador, tela de cadastro. **Não testado**: gravação no Supabase de verdade e memória do Streamlit Cloud com Salvador (~600 MB na memória).
 
+## 8b2. VPS Hostinger (em instalação desde 25/10/2026)
+- Objetivo: o app rodar numa VPS Ubuntu 24.04 da Hostinger, com banco PostgreSQL próprio no lugar do Supabase. Os votos continuam sendo os Parquet de `dados_app/` (vêm do GitHub); o banco só guarda a tabela `bairros_informados`. Baixar/preparar dados do TSE continua no computador do usuário.
+- `app.py`: se houver o segredo `DATABASE_URL`, usa o PostgreSQL (psycopg); senão Supabase (`SUPABASE_URL`/`SUPABASE_KEY`); senão o CSV local. Se o banco não responder, mostra aviso e bloqueia o cadastro (flag `banco_fora`).
+- Pasta `vps/`: `instalar.sh` (instala tudo como root: pacotes, usuário `eleicoes`, PostgreSQL + `estrutura.sql`, ambiente Python, `secrets.toml`, serviço `app-tse`, Nginx com websocket, firewall, backup diário em `/var/backups/app-tse`, HTTPS se tiver domínio), `ativar_https.sh` (HTTPS depois), `atualizar.sh` (`git fetch --depth 1` + `reset --hard` + reinicia), `importar_bairros.py` (copia os bairros do Supabase ou de um CSV para o banco da VPS; pode rodar várias vezes).
+- Testado no computador com PostgreSQL temporário (pgserver): estrutura, importação por CSV, leitura e gravação pelo app, banco fora do ar. **Não testado ainda**: os scripts `.sh` numa VPS de verdade.
+- Na VPS: app em `/opt/app-tse`, logs com `journalctl -u app-tse`, reiniciar com `systemctl restart app-tse`.
+
 ## 8c. Resultados históricos (1960–1990)
 - Objetivo: ter o resultado das eleições na Bahia desde 1960. O TSE **não tem** votação por seção nem por município para esse período — só o resultado consolidado do **estado inteiro**, digitalizado a partir de atas e mapas de apuração em papel. Por isso é um pipeline separado do `baixar_dados.py`/`preparar_dados.py` (que são para 2016–2026, com seção/escola).
 - `baixar_dados_historico.py` — baixa de `cdn.tse.jus.br/estatistica/sead/odsele` os arquivos "_UF" (votação por candidato, detalhe da apuração, votação por partido, vagas, legendas) para os 11 anos em que esse formato existe: **1960, 1962, 1965, 1966, 1970, 1974, 1978, 1982, 1986, 1989, 1990**. Grava em `dados/historico/`.

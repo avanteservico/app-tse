@@ -895,7 +895,15 @@ def segredo(nome):
 
 SUPABASE_URL = segredo("SUPABASE_URL").rstrip("/")
 SUPABASE_KEY = segredo("SUPABASE_KEY")
-USA_SUPABASE = bool(SUPABASE_URL and SUPABASE_KEY)
+DATABASE_URL = segredo("DATABASE_URL")   # PostgreSQL próprio (na VPS); tem prioridade sobre o Supabase
+USA_POSTGRES = bool(DATABASE_URL)
+USA_SUPABASE = bool(SUPABASE_URL and SUPABASE_KEY) and not USA_POSTGRES
+USA_BANCO = USA_POSTGRES or USA_SUPABASE
+
+
+def postgres():
+    import psycopg
+    return psycopg.connect(DATABASE_URL, connect_timeout=10)
 
 
 def supabase(metodo, parametros=None, corpo=None, cabecalhos=None):
@@ -910,7 +918,21 @@ def supabase(metodo, parametros=None, corpo=None, cabecalhos=None):
 
 
 def ler_bairros_informados():
-    """Bairros que o usuário informou (Supabase, no app publicado; senão dados/bairros_informados.csv)."""
+    """Bairros que o usuário informou (PostgreSQL da VPS ou Supabase; senão dados/bairros_informados.csv)."""
+    if USA_POSTGRES:
+        import psycopg
+        try:
+            with postgres() as conexao:
+                linhas = conexao.execute(
+                    "select cd_municipio, nr_zona, nm_local_n, nm_local_votacao, bairro "
+                    "from bairros_informados order by cd_municipio, nr_zona, nm_local_n"
+                ).fetchall()
+        except psycopg.Error:
+            # banco fora do ar: segue só com os bairros do TSE
+            st.session_state["banco_fora"] = True
+            return pd.DataFrame(columns=COLS_BAIRROS)
+        st.session_state["banco_fora"] = False
+        return pd.DataFrame(linhas, columns=COLS_BAIRROS).fillna("").astype(str)
     if USA_SUPABASE:
         import requests
         linhas, inicio = [], 0
@@ -924,9 +946,9 @@ def ler_bairros_informados():
                 inicio += 1000
         except requests.exceptions.RequestException:
             # Supabase fora do ar (ex.: projeto pausado): segue só com os bairros do TSE
-            st.session_state["supabase_fora"] = True
+            st.session_state["banco_fora"] = True
             return pd.DataFrame(columns=COLS_BAIRROS)
-        st.session_state["supabase_fora"] = False
+        st.session_state["banco_fora"] = False
         df = pd.DataFrame(linhas, columns=[c.lower() for c in COLS_BAIRROS]).fillna("").astype(str)
         df.columns = COLS_BAIRROS
         return df
@@ -941,7 +963,7 @@ def ler_bairros_informados():
 
 def versao_bairros():
     """Muda sempre que os bairros informados são salvos (para o cache se atualizar)."""
-    if USA_SUPABASE:
+    if USA_BANCO:
         # muda quando você salva e, no máximo, a cada 5 minutos (para ver o que foi salvo em outro aparelho)
         return f"{st.session_state.get('bairros_salvos', 0)}|{int(time.time() // 300)}"
     return ARQ_BAIRROS.stat().st_mtime_ns if ARQ_BAIRROS.exists() else 0
@@ -949,6 +971,21 @@ def versao_bairros():
 
 def salvar_bairros_municipio(codigo, registros, removidos):
     """Grava os bairros de um município. registros: {(zona, nome_n): (escola, bairro)}; removidos: chaves apagadas."""
+    if USA_POSTGRES:
+        with postgres() as conexao:   # uma transação só: grava tudo ou nada
+            with conexao.cursor() as cursor:
+                cursor.executemany(
+                    "insert into bairros_informados (cd_municipio, nr_zona, nm_local_n, nm_local_votacao, bairro) "
+                    "values (%s, %s, %s, %s, %s) on conflict (cd_municipio, nr_zona, nm_local_n) "
+                    "do update set nm_local_votacao = excluded.nm_local_votacao, bairro = excluded.bairro",
+                    [(str(codigo), z, n, nome, b) for (z, n), (nome, b) in registros.items()],
+                )
+                cursor.executemany(
+                    "delete from bairros_informados where cd_municipio = %s and nr_zona = %s and nm_local_n = %s",
+                    [(str(codigo), z, n) for z, n in removidos],
+                )
+        st.session_state["bairros_salvos"] = st.session_state.get("bairros_salvos", 0) + 1
+        return
     if USA_SUPABASE:
         if registros:
             supabase(
@@ -1220,7 +1257,7 @@ def tela_cadastro(indice):
         "Aqui estão todas as escolas do município (de todos os anos). Digite o bairro/localidade na última "
         "coluna e clique em Salvar. O que você informar vale para todos os anos e tem prioridade sobre o "
         "bairro do TSE; se deixar em branco, continua valendo o do TSE. "
-        + ("Fica salvo no Supabase." if USA_SUPABASE else "Fica salvo em dados/bairros_informados.csv.")
+        + ("Fica salvo no banco de dados." if USA_BANCO else "Fica salvo em dados/bairros_informados.csv.")
     )
     nome_mun = st.selectbox("Município da lista de escolas", sorted(indice))
     codigo = indice[nome_mun]
@@ -1244,8 +1281,8 @@ def tela_cadastro(indice):
     )
     esc = texto(esc)
     salvos = ler_bairros_informados()
-    if st.session_state.get("supabase_fora"):
-        st.error("Não consegui acessar o Supabase, onde ficam os bairros informados. O cadastro fica "
+    if st.session_state.get("banco_fora"):
+        st.error("Não consegui acessar o banco de dados onde ficam os bairros informados. O cadastro fica "
                  "bloqueado até ele voltar, para não salvar em cima de uma lista que pareceria vazia.")
         st.stop()
     salvos = salvos[salvos["CD_MUNICIPIO"] == str(codigo)]
@@ -1377,8 +1414,8 @@ else:
         st.stop()
 
     ds_ano = carregar_municipio(codigo, versao_bairros(), (ano,))
-    if st.session_state.get("supabase_fora"):
-        st.warning("Não consegui acessar o Supabase agora; mostrando só os bairros do TSE "
+    if st.session_state.get("banco_fora"):
+        st.warning("Não consegui acessar o banco de dados dos bairros agora; mostrando só os bairros do TSE "
                    "(os bairros que você informou voltam a aparecer quando ele responder).")
     ds = ds_ano[(ds_ano["NR_TURNO"] == turno) & (ds_ano["DS_CARGO"] == cargo)]
     escolas_todas = agregar_escolas(ds)
