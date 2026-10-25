@@ -581,6 +581,16 @@ def arquivo_municipio(codigo):
     return compactado if compactado.exists() else PASTA / "municipios" / f"{codigo}.csv"
 
 
+def arquivo_historico():
+    compactado = PASTA_APP / "votos_historico_ba.parquet"
+    return compactado if compactado.exists() else PASTA / "historico" / "votos_historico_ba.csv"
+
+
+def arquivo_historico_resumo():
+    compactado = PASTA_APP / "resumo_estadual_ba.parquet"
+    return compactado if compactado.exists() else PASTA / "historico" / "resumo_estadual_ba.csv"
+
+
 def ler_tabela(caminho):
     """Lê o arquivo compactado (Parquet) ou o CSV, sempre com todas as colunas como texto."""
     if caminho.suffix == ".parquet":
@@ -595,10 +605,88 @@ def carregar_resumo():
     return so_nominais(df)
 
 
+@st.cache_data
+def carregar_historico():
+    """Resultados de 1960 a 1990 (gerados pelo preparar_dados_historico.py): só o consolidado do
+    estado inteiro, sem município/bairro/escola/seção (o TSE não tem esse detalhe para esse período)."""
+    arquivo = arquivo_historico()
+    if not arquivo.exists():
+        return pd.DataFrame(columns=[
+            "ANO", "NR_TURNO", "DS_CARGO", "NR_VOTAVEL", "NM_VOTAVEL", "SG_PARTIDO",
+            "COMPOSICAO_LEGENDA", "DS_SIT_TOT_TURNO", "QT_VOTOS",
+        ])
+    df = ler_tabela(arquivo)
+    df["QT_VOTOS"] = pd.to_numeric(df["QT_VOTOS"], errors="coerce").fillna(0).astype(int)
+    return df
+
+
+@st.cache_data
+def carregar_historico_resumo():
+    """Comparecimento/abstenção de 1960 a 1990, por ano/turno/cargo (pode não existir para algum ano)."""
+    arquivo = arquivo_historico_resumo()
+    if not arquivo.exists():
+        return pd.DataFrame(columns=["ANO", "NR_TURNO", "DS_CARGO", "Eleitores_aptos", "Compareceram", "Abstencoes"])
+    df = ler_tabela(arquivo)
+    for coluna in ["Eleitores_aptos", "Compareceram", "Abstencoes"]:
+        df[coluna] = pd.to_numeric(df[coluna], errors="coerce").fillna(0).astype(int)
+    return df
+
+
 SITUACOES = {
     "ELEITO": "Eleito", "ELEITO POR QP": "Eleito", "ELEITO POR MEDIA": "Eleito",
     "2O TURNO": "2º turno", "2 TURNO": "2º turno", "SUPLENTE": "Suplente", "NAO ELEITO": "Não eleito",
 }
+
+
+def mostrar_resultado_historico(ano, hist_ano):
+    """Ranking de candidatos para os anos 1960-1990 (ver carregar_historico). Sem seletor de
+    município/bairro/escola/seção porque esse detalhe não existe nesses anos; sem foto nem
+    "ver por escola", pelo mesmo motivo."""
+    turno = painel.selectbox("Turno", sorted(hist_ano["NR_TURNO"].unique()))
+    d = hist_ano[hist_ano["NR_TURNO"] == turno]
+    cargo = painel.selectbox("Cargo", sorted(d["DS_CARGO"].unique()))
+    base = d[d["DS_CARGO"] == cargo].sort_values("QT_VOTOS", ascending=False).reset_index(drop=True)
+
+    faixa_contexto(
+        [(ano, False), (cargo, True), ("Bahia (resultado estadual)", False), (f"{turno}º turno", False)],
+        "Eleição Geral",
+    )
+
+    total = int(base["QT_VOTOS"].sum())
+    resumo = carregar_historico_resumo()
+    linha_resumo = resumo[(resumo["ANO"] == ano) & (resumo["NR_TURNO"] == turno) & (resumo["DS_CARGO"] == cargo)]
+    metricas = [("Total de votos nominais", formatar(total)), ("Candidatos", len(base))]
+    if not linha_resumo.empty:
+        r = linha_resumo.iloc[0]
+        metricas += [("Compareceram", formatar(r["Compareceram"])), ("Abstenções", formatar(r["Abstencoes"]))]
+    for coluna, (rotulo, valor) in zip(st.columns(len(metricas)), metricas):
+        coluna.metric(rotulo, valor)
+
+    linhas = []
+    for pos, c in enumerate(base.itertuples(index=False), start=1):
+        situacao = SITUACOES.get(normalizar(c.DS_SIT_TOT_TURNO), "")
+        partido = c.SG_PARTIDO or c.COMPOSICAO_LEGENDA
+        meta = [html.escape(partido)] if partido else []
+        if c.NR_VOTAVEL:
+            meta.append(f"nº {html.escape(c.NR_VOTAVEL)}")
+        meta = " · ".join(meta)
+        if situacao in SELOS:
+            meta = f'<span class="selo {SELOS[situacao]}">{situacao}</span>' + (f" · {meta}" if meta else "")
+        pct = (c.QT_VOTOS / total * 100) if total else 0.0
+        linhas.append(
+            '<div class="cand">'
+            f'<div class="cand-foto">{html.escape(iniciais(c.NM_VOTAVEL))}</div>'
+            f'<div class="cand-pos">{pos}</div>'
+            f'<div><div class="cand-nome">{html.escape(c.NM_VOTAVEL)}</div><div class="cand-meta">{meta}</div></div>'
+            f'<div class="cand-votos"><b>{formatar(c.QT_VOTOS)}</b><span>{formatar_pct(pct)}</span></div>'
+            f'<div class="cand-barra"><span style="width:{min(pct, 100):.2f}%"></span></div>'
+            "</div>"
+        )
+    st.markdown(f'<div class="lista">{"".join(linhas)}</div>', unsafe_allow_html=True)
+    painel.info(
+        "Esse ano só tem o resultado consolidado do estado inteiro (fonte: TSE, Repositório de "
+        "Dados Eleitorais). Não há dados por município, bairro, escola ou seção para esse período."
+    )
 
 
 @st.cache_data(max_entries=3)
@@ -1172,6 +1260,7 @@ if not arquivo_resumo().exists() or not ARQ_INDICE.exists():
 
 dados = carregar_resumo()
 indice = carregar_indice()
+historico = carregar_historico()
 
 if EH_CADASTRO:
     tela_cadastro(indice)
@@ -1183,8 +1272,15 @@ if CELULAR:
 else:
     painel = st.sidebar
     painel.header("Filtros")
-anos = sorted(dados["ANO"].unique(), reverse=True)
+anos_modernos = set(dados["ANO"].unique())
+anos_historicos = set(historico["ANO"].unique())
+anos = sorted(anos_modernos | anos_historicos, reverse=True)
 ano = painel.selectbox("Ano da eleição", anos)
+
+if ano in anos_historicos and ano not in anos_modernos:
+    mostrar_resultado_historico(ano, historico[historico["ANO"] == ano])
+    st.stop()
+
 dados_ano = dados[dados["ANO"] == ano]   # todos os cargos/turnos do ano, na Bahia toda (comparativo por município)
 d = dados_ano
 

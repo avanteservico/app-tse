@@ -9,8 +9,8 @@
 - Seja honesto sobre o que foi e o que não foi testado (seção 8).
 
 ## 2. Objetivo do projeto
-App em **Streamlit** sobre os dados abertos do **TSE** (Tribunal Superior Eleitoral), para a **Bahia**, eleições gerais **2018**, **2022**, **2026 (1º turno)** e municipais **2016**, **2020**, **2024** (incluídas em 14/10/2026):
-- Filtrar por ano, turno, cargo, município, bairro/localidade, escola e seção.
+App em **Streamlit** sobre os dados abertos do **TSE** (Tribunal Superior Eleitoral), para a **Bahia**, eleições gerais **2018**, **2022**, **2026 (1º turno)** e municipais **2016**, **2020**, **2024** (incluídas em 14/10/2026), mais os resultados históricos de **1960 a 1990** (incluídos em 24/10/2026 — ver seção 8c; só o resultado consolidado do estado, sem município/escola):
+- Filtrar por ano, turno, cargo, município, bairro/localidade, escola e seção (nos anos de 1960 a 1990, só ano/turno/cargo — ver seção 8c).
 - Mostrar **sempre a votação nominal** (sem branco, nulo e voto de legenda).
 - Clicar no candidato → votação dele **por escola** no município.
 - **Comparar** a votação do candidato por escola entre 2022 e 2026.
@@ -29,6 +29,8 @@ App em **Streamlit** sobre os dados abertos do **TSE** (Tribunal Superior Eleito
 | `supabase_criar_tabela.sql` | Cria a tabela `bairros_informados` no Supabase (com os bairros já cadastrados). Rodar uma vez no SQL Editor. |
 | `requirements.txt` | Bibliotecas para o Streamlit Cloud. |
 | `dados/bairros_informados.csv` | Criado pelo app (tela de cadastro). Colunas: `CD_MUNICIPIO, NR_ZONA, NM_LOCAL_N, NM_LOCAL_VOTACAO, BAIRRO`. É trabalho do usuário: **nunca apagar nem sobrescrever** sem avisar. |
+| `baixar_dados_historico.py` | Baixa do TSE os resultados de 1960 a 1990 (só existem consolidados por estado, não por seção): votação por candidato, detalhe da apuração, votação por partido, vagas e legendas. Grava em `dados/historico/`. Ver seção 8c. |
+| `preparar_dados_historico.py` | Filtra a Bahia nesses arquivos e gera `dados/historico/votos_historico_ba.csv` e `resumo_estadual_ba.csv`. |
 
 Dependências: `pip install requests pandas streamlit pydeck` (pydeck é opcional: sem ele o mapa usa `st.map`).
 
@@ -36,11 +38,13 @@ Dependências: `pip install requests pandas streamlit pydeck` (pydeck é opciona
 ```
 python baixar_dados.py
 python preparar_dados.py
+python baixar_dados_historico.py
+python preparar_dados_historico.py
 python compactar_dados.py
 streamlit run app.py
 ```
-Para atualizar o app publicado: rodar os três scripts e depois `git add -A`, `git commit -m "atualiza dados"`, `git push`.
-Repetir os dois primeiros quando o TSE atualizar os arquivos (ex.: depois do 2º turno, com `--atualizar`). Mudou só o `app.py`? Basta reiniciar o Streamlit.
+Para atualizar o app publicado: rodar os cinco scripts e depois `git add -A`, `git commit -m "atualiza dados"`, `git push`.
+Repetir os dois primeiros quando o TSE atualizar os arquivos (ex.: depois do 2º turno, com `--atualizar`). Os dois de histórico (1960-1990) não mudam de um ano para o outro — só rodar de novo se quiser conferir se o TSE revisou algo. Mudou só o `app.py`? Basta reiniciar o Streamlit.
 
 ## 5. Fontes do TSE (Portal de Dados Abertos, CDN `https://cdn.tse.jus.br/estatistica/sead/odsele`)
 - `votacao_secao/votacao_secao_{ano}_BA.zip`
@@ -65,7 +69,7 @@ Formato dos CSVs: separador `;`; codificação **latin-1 em 2022, mas 2026 pode 
 - Texto de interface em português; tabelas com cabeçalhos em português.
 
 ## 7. Estrutura do `app.py`
-Tela na barra lateral (`Votação` | `Cadastrar bairros das escolas`) → filtros (ano, turno, cargo, município, pesquisa de bairro + lista de bairros, escola, seção) → métricas → dados da escola/seções → "Mapa das escolas" → Top 10 → tabela clicável de candidatos (`on_select="rerun"`, com alternativa para Streamlit antigo) → votação por escola + mapa do candidato → comparação entre anos + mapa da diferença + CSVs. Memória: `carregar_municipio(codigo, versao, anos)` lê do Parquet **só os anos pedidos** (o ano escolhido; o da comparação é lido à parte) e guarda os textos como `category` (Salvador: ~554 MB → ~30 MB por ano). Por isso todo agrupamento usa `agrupar()` (observed=True) e o resultado passa por `texto()` (volta a texto comum). Cache de municípios limitado (`max_entries=6`). Funções-chave: `so_nominais`, `carregar_municipio(codigo, versao, anos)`, `agregar_escolas`, `escolas_com_votos`, `chave_escola`, `preparar_para_comparar`, `desenhar_mapa`, `tela_cadastro`, `renderizar_lista_candidatos` (lista clicável genérica, usada tanto por município quanto por escola), `mostrar_candidato_por_municipio`, `mostrar_comparativo_municipios`, `mostrar_trajetoria`/`trajetoria` (todas as eleições do candidato, pelo `ID_PESSOA` do cadastro do TSE).
+Tela na barra lateral (`Votação` | `Cadastrar bairros das escolas`) → filtros (ano, turno, cargo, município, pesquisa de bairro + lista de bairros, escola, seção) → métricas → dados da escola/seções → "Mapa das escolas" → Top 10 → tabela clicável de candidatos (`on_select="rerun"`, com alternativa para Streamlit antigo) → votação por escola + mapa do candidato → comparação entre anos + mapa da diferença + CSVs. Memória: `carregar_municipio(codigo, versao, anos)` lê do Parquet **só os anos pedidos** (o ano escolhido; o da comparação é lido à parte) e guarda os textos como `category` (Salvador: ~554 MB → ~30 MB por ano). Por isso todo agrupamento usa `agrupar()` (observed=True) e o resultado passa por `texto()` (volta a texto comum). Cache de municípios limitado (`max_entries=6`). Funções-chave: `so_nominais`, `carregar_municipio(codigo, versao, anos)`, `agregar_escolas`, `escolas_com_votos`, `chave_escola`, `preparar_para_comparar`, `desenhar_mapa`, `tela_cadastro`, `renderizar_lista_candidatos` (lista clicável genérica, usada tanto por município quanto por escola), `mostrar_candidato_por_municipio`, `mostrar_comparativo_municipios`, `mostrar_trajetoria`/`trajetoria` (todas as eleições do candidato, pelo `ID_PESSOA` do cadastro do TSE). Para 1960-1990: logo depois do `selectbox` de ano, se o ano escolhido só existir no histórico, o app desvia para `mostrar_resultado_historico(ano, hist_ano)` e para (`st.stop()`) — o resto do fluxo (município, escola, mapa, comparação) nem roda. Dados vêm de `carregar_historico()`/`carregar_historico_resumo()`.
 
 ## 8. O que foi testado e o que NÃO foi
 **Testado** (com dados **fictícios** no formato do TSE e um Streamlit/pydeck **simulados**, porque o ambiente de desenvolvimento não conseguia instalar as bibliotecas): lógica de filtros, votos nominais, ranking, comparação, pareamento de escolas, mapas (dados enviados ao pydeck), nome de urna, cadastro de bairros, dois encodings, ausência de arquivos.
@@ -83,6 +87,18 @@ Tela na barra lateral (`Votação` | `Cadastrar bairros das escolas`) → filtro
 - Segredos (Streamlit Cloud > Settings > Secrets): `SUPABASE_URL`, `SUPABASE_KEY` (chave **service_role**, nunca no código) e `SENHA_CADASTRO` (protege a tela de cadastro). Sem `SUPABASE_*`, o app usa o CSV local.
 - Com Supabase, os bairros ficam na tabela `bairros_informados` (colunas em minúsculo); RLS ligado sem políticas = só a chave service_role acessa.
 - Testado localmente (AppTest, dados reais): abrir o app, Itamaraju com bairros informados, Salvador, tela de cadastro. **Não testado**: gravação no Supabase de verdade e memória do Streamlit Cloud com Salvador (~600 MB na memória).
+
+## 8c. Resultados históricos (1960–1990) — em andamento, ainda não integrado ao app
+- Objetivo: ter o resultado das eleições na Bahia desde 1960. O TSE **não tem** votação por seção nem por município para esse período — só o resultado consolidado do **estado inteiro**, digitalizado a partir de atas e mapas de apuração em papel. Por isso é um pipeline separado do `baixar_dados.py`/`preparar_dados.py` (que são para 2016–2026, com seção/escola).
+- `baixar_dados_historico.py` — baixa de `cdn.tse.jus.br/estatistica/sead/odsele` os arquivos "_UF" (votação por candidato, detalhe da apuração, votação por partido, vagas, legendas) para os 11 anos em que esse formato existe: **1960, 1962, 1965, 1966, 1970, 1974, 1978, 1982, 1986, 1989, 1990**. Grava em `dados/historico/`.
+- `preparar_dados_historico.py` — lê os TXT (sem cabeçalho, `;`, aspas, **sempre latin-1**, sentinelas `#NULO#`/`-1` = em branco e `#NE#`/`-3` = não existia esse registro na época), filtra `SIGLA_UF == "BA"` e gera `dados/historico/votos_historico_ba.csv` (um candidato por linha: ano, turno, cargo, nome de urna, partido, situação, votos) e `dados/historico/resumo_estadual_ba.csv` (comparecimento/abstenção/brancos/nulos por ano-turno-cargo). Sem seção/município, não gera bairro, mapa nem foto.
+- **Testado com os 11 anos, dados reais baixados do TSE** (2.957 candidatos no total): o layout (nº de colunas) é o mesmo em todos os anos — o script `preparar_dados_historico.py` valida isso e aborta com mensagem clara se algum ano vier diferente. Números conferem com a história: Jânio Quadros eleito presidente em 1960 (255.530 votos na BA), Lomanto Júnior eleito governador em 1962 (396.051 votos, contra Waldir Pires).
+- Ao contrário do que eu tinha concluído só com 1960: a maioria dos anos (1962, 1966, 1970, 1974, 1978, 1982, 1986, 1990) **também tem Deputado Federal e Deputado Estadual**, não só os cargos majoritários. Só 1960 e 1989 trouxeram apenas Presidente/Vice (eram eleições presidenciais isoladas). Prefeito e Vereador continuam fora (são eleições municipais, com calendário próprio, fora do escopo "_UF"). **1965 não teve eleição na Bahia** (foi eleição de Governador só em 11 estados, SP/RJ/MG entre eles — confirmado olhando o arquivo bruto: a BA não está na lista de UFs daquele ano).
+- Os ZIPs de alguns anos (1962, 1966, 1970, 1974, 1978, 1982, 1986, 1990) trazem **um arquivo por UF** dentro do ZIP (ex.: `..._BA.txt`); outros (1960, 1965, 1989) trazem um único arquivo nacional. O `baixar_dados_historico.py` já identifica e extrai o arquivo certo da Bahia em ambos os casos.
+- Limitação pontual notada: em 1962, a sigla/nome do partido (`SIGLA_PARTIDO`/`NOME_PARTIDO`) vem vazia em **todas** as linhas (sentinela `#NE#` no arquivo original do TSE, não é falha do script) — a informação de legenda ainda aparece em `COMPOSICAO_LEGENDA` (ex.: "PST / UDN / PTB / PR").
+- **Integrado ao `app.py`** (testado com `AppTest`, dados reais, anos 1960 e 1982): o seletor "Ano da eleição" junta os anos modernos (2016-2026) com os históricos (1960-1990, lidos de `carregar_historico()`). Ao escolher um ano histórico, o app pula direto para `mostrar_resultado_historico()`: mostra só Turno, Cargo, as métricas (total de votos, candidatos, comparecimento, abstenções) e o ranking de candidatos (mesmo cartão visual da lista normal — foto fica com as iniciais, já que não há foto; sem número quando ele não existia na época, ex.: Presidente antes de 1982); não aparecem município, bairro, escola, seção, mapa nem comparação entre anos, porque esse detalhe não existe para esse período. Um aviso no painel de filtros explica isso ao usuário.
+- `compactar_dados.py` agora também gera `dados_app/votos_historico_ba.parquet` e `dados_app/resumo_estadual_ba.parquet` (só se os CSVs de `dados/historico/` existirem) — vão para o GitHub junto com o resto de `dados_app/`.
+- Cargos disponíveis variam por ano, porque até 1990 cada estado tinha seu próprio calendário para eleição de Governador (não havia unificação com a eleição presidencial).
 
 ## 9. Backlog de ideias (só se o usuário pedir)
 - Importar bairros a partir de planilha (CSV/Excel) preenchida fora do app.

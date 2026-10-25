@@ -36,6 +36,9 @@ def main():
     if not resumo.exists() or not indice.exists() or not municipios:
         raise SystemExit("Dados não encontrados. Rode antes: python preparar_dados.py")
 
+    historico = PASTA_DADOS / "historico" / "votos_historico_ba.csv"
+    historico_resumo = PASTA_DADOS / "historico" / "resumo_estadual_ba.csv"
+
     # começa do zero para não sobrar arquivo velho
     if PASTA_APP.exists():
         shutil.rmtree(PASTA_APP)
@@ -43,6 +46,13 @@ def main():
 
     total = compactar(resumo, PASTA_APP / "votos_por_municipio.parquet")
     shutil.copy(indice, PASTA_APP / "municipios_indice.csv")
+
+    if historico.exists():
+        total += compactar(historico, PASTA_APP / "votos_historico_ba.parquet")
+        print("Resultados históricos (1960-1990) incluídos.")
+    if historico_resumo.exists():
+        total += compactar(historico_resumo, PASTA_APP / "resumo_estadual_ba.parquet")
+
     grandes = []
     for i, arquivo in enumerate(municipios, start=1):
         tamanho = compactar(arquivo, PASTA_APP / "municipios" / f"{arquivo.stem}.parquet")
