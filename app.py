@@ -1337,6 +1337,10 @@ anos_modernos = set(dados["ANO"].unique())
 anos_historicos = set(historico["ANO"].unique())
 anos = sorted(anos_modernos | anos_historicos, reverse=True)
 ano = painel.selectbox("Ano da eleição", anos)
+painel.caption(
+    "Prefeito e vereador só a partir de 1996: as eleições municipais anteriores "
+    "(1992, 1988, 1985, 1982...) não estão nos dados abertos do TSE."
+)
 
 if ano in anos_historicos and ano not in anos_modernos:
     mostrar_resultado_historico(ano, historico[historico["ANO"] == ano])
