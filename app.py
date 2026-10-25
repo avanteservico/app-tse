@@ -40,7 +40,7 @@ NAO_COMPARAR = "Não comparar"
 LIMITE_GRAUS = 1.2   # escola a mais de ~130 km do centro do município = coordenada errada
 centro_mun = None    # (latitude, longitude) mediana das escolas do município escolhido
 
-st.set_page_config(page_title="Eleições - Bahia", layout="wide")
+st.set_page_config(page_title="Eleições - Bahia", page_icon=str(Path(__file__).parent / "favicon.png"), layout="wide")
 
 
 def _pagina_votacao():
