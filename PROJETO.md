@@ -9,7 +9,7 @@
 - Seja honesto sobre o que foi e o que não foi testado (seção 8).
 
 ## 2. Objetivo do projeto
-App em **Streamlit** sobre os dados abertos do **TSE** (Tribunal Superior Eleitoral), para a **Bahia**, eleições gerais **2018**, **2022**, **2026 (1º turno)** e municipais **2016**, **2020**, **2024** (incluídas em 14/10/2026), mais todos os pleitos de **1960 a 2014** (incluídos em 24/10/2026 — ver seções 8c e 8d): 1960-1990 só o resultado consolidado do estado (sem município/escola); 1994-2014 por município (sem bairro/escola/seção/mapa):
+App em **Streamlit** sobre os dados abertos do **TSE** (Tribunal Superior Eleitoral), para a **Bahia**, eleições gerais **2018**, **2022**, **2026** (1º turno; Presidente também no 2º turno) e municipais **2016**, **2020**, **2024** (incluídas em 14/10/2026), mais todos os pleitos de **1960 a 2014** (incluídos em 24/10/2026 — ver seções 8c e 8d): 1960-1990 só o resultado consolidado do estado (sem município/escola); 1994-2014 por município (sem bairro/escola/seção/mapa):
 - Filtrar por ano, turno, cargo, município, bairro/localidade, escola e seção (1960-1990: só ano/turno/cargo; 1994-2014: + município — ver seções 8c/8d).
 - Mostrar **sempre a votação nominal** (sem branco, nulo e voto de legenda).
 - Clicar no candidato → votação dele **por escola** no município.
@@ -118,6 +118,7 @@ Tela na barra lateral (`Votação` | `Cadastrar bairros das escolas`) → filtro
 - Antes não aparecia: o arquivo de seção da Bahia (`votacao_secao_{ano}_BA`) não traz Presidente. O `preparar_dados.py` agora lê, por ano, o arquivo da Bahia e também `presidente_secao_{ano}_BA.csv` (função `processar_arquivo`), então Presidente tem tudo igual aos outros cargos: município, bairro, escola, seção, mapa, comparação, foto e selo.
 - No app, o cadastro do Presidente é procurado na UE "BR" (os demais cargos estaduais/federais, "BA"); na trajetória e na comparação entre anos, "BR" vale como "BA" (votos na Bahia inteira).
 - Conferido (AppTest, dados reais): Lula com 72,12% na Bahia no 2º turno de 2022 (foto, selo "Eleito", PT nº 13); Haddad com selo "2º turno" em 2018; votação por escola em Itamaraju e Salvador.
+- **2º turno de 2026** (25/10/2026, incluído em 30/10/2026): só Presidente (na Bahia não houve 2º turno para governador — o `votacao_secao_2026_BA` continua só com o 1º turno). Baixados de novo, com os arquivos do TSE gerados depois da eleição: `votacao_secao_2026_BR.zip` (26/10), `votacao_secao_2026_BA.zip` (26/10) e `consulta_cand_2026.zip` (30/10). Na Bahia: Lula (PT, nº 13) 6.485.258 votos (71,31% dos nominais), eleito; Flávio Bolsonaro (PL, nº 22) 2.608.761 (28,69%); 92.721 brancos e 235.307 nulos.
 - **Candidatos substituídos com o mesmo número** (ex.: Lula em 2018, trocado por Haddad no nº 13): o cadastro do TSE guarda os dois, e o substituído fica com situação `#NULO#`. Como o app acha o candidato pelo número, o cartão de Haddad saía com a foto de Lula e sem selo, e a trajetória/comparação de Lula pegava os votos de Haddad. O `preparar_candidatos.py` agora fica só com a candidatura totalizada quando o número se repete (740 candidaturas descartadas, quase todas de prefeito/vereador substituídos; o problema já existia antes, sem ser notado).
 
 ## 8c3. Eleições municipais antes de 1996 — não existem nos dados abertos
